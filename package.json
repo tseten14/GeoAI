@@ -8,6 +8,8 @@
     "dev:traffic": "cd traffic-app && npm run dev"
   },
   "dependencies": {
+    "@mapbox/polyline": "^1.2.1",
+    "axios": "^1.13.6",
     "bcrypt": "^5.0.1",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "~1.4.4",

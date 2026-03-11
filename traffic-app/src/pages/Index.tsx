@@ -6,8 +6,8 @@ import { CoordinateInput } from '@/components/CoordinateInput';
 import { MapView } from '@/components/MapView';
 import { PipelineStatus } from '@/components/PipelineStatus';
 import { AnalysisDashboard } from '@/components/AnalysisDashboard';
-import { analyzeTraffic, TrafficAnalysis, AnalysisMetadata } from '@/lib/api/traffic';
-import { AlertCircle, Map } from 'lucide-react';
+import { analyzeTraffic, TrafficAnalysis, AnalysisMetadata, POIMarker } from '@/lib/api/traffic';
+import { AlertCircle, Map as MapIcon, Route } from 'lucide-react';
 
 import { useSearchParams } from 'react-router-dom';
 
@@ -23,7 +23,7 @@ export default function Index() {
 
   const initialLat = urlLat ? parseFloat(urlLat) : 40.7128;
   const initialLng = urlLng ? parseFloat(urlLng) : -74.006;
-  const initialRadius = urlRadius ? parseInt(urlRadius, 10) : 5;
+  const initialRadius = urlRadius ? parseInt(urlRadius, 10) : 1;
 
   const [isLoading, setIsLoading] = useState(false);
   const [pipelineStage, setPipelineStage] = useState<PipelineStage>('idle');
@@ -31,16 +31,22 @@ export default function Index() {
   const [radius, setRadius] = useState(initialRadius);
   const [analysis, setAnalysis] = useState<TrafficAnalysis | null>(null);
   const [metadata, setMetadata] = useState<AnalysisMetadata | null>(null);
+  
+  // New Visual Data State
+  const [routeGeometry, setRouteGeometry] = useState<[number, number][] | null>(null);
+  const [poiMarkers, setPoiMarkers] = useState<POIMarker[]>([]);
 
   // We use a ref so we only auto-analyze once on mount
   const hasAutoAnalyzed = useRef(false);
 
-  const handleAnalyze = useCallback(async (lat: number, lon: number, radiusMiles: number) => {
+  const handleAnalyze = useCallback(async (lat: number, lon: number, destLat?: number, destLon?: number, radiusMiles?: number) => {
     setIsLoading(true);
     setAnalysis(null);
     setMetadata(null);
+    setRouteGeometry(null);
+    setPoiMarkers([]);
     setCenter([lat, lon]);
-    setRadius(radiusMiles);
+    if (radiusMiles) setRadius(radiusMiles);
 
     // Simulate ETL stages
     setPipelineStage('extract');
@@ -49,7 +55,7 @@ export default function Index() {
     setPipelineStage('transform');
 
     try {
-      const response = await analyzeTraffic(lat, lon, radiusMiles);
+      const response = await analyzeTraffic(lat, lon, destLat, destLon, radiusMiles);
 
       if (!response) {
         throw new Error('No response from server');
@@ -60,6 +66,12 @@ export default function Index() {
 
         setAnalysis(response.data);
         setMetadata(response.metadata);
+        
+        if (response.visualData) {
+          if (response.visualData.routeCoordinates) setRouteGeometry(response.visualData.routeCoordinates);
+          if (response.visualData.poiMarkers) setPoiMarkers(response.visualData.poiMarkers);
+        }
+        
         setPipelineStage('complete');
 
         toast({
@@ -86,11 +98,12 @@ export default function Index() {
   useEffect(() => {
     if (urlLat && urlLng && !hasAutoAnalyzed.current) {
       hasAutoAnalyzed.current = true;
-      handleAnalyze(initialLat, initialLng, initialRadius);
+      handleAnalyze(initialLat, initialLng, undefined, undefined, initialRadius);
     }
   }, [urlLat, urlLng, initialLat, initialLng, initialRadius, handleAnalyze]);
 
   const handleMapClick = useCallback((lat: number, lon: number) => {
+    // In a more complex app, this might update the origin or destination depending on mode
     setCenter([lat, lon]);
   }, []);
 
@@ -125,15 +138,26 @@ export default function Index() {
               animate={{ opacity: 1, y: 0 }}
               className="card-elevated overflow-hidden"
             >
-              <div className="p-4 border-b border-border/50 flex items-center gap-3">
-                <div className="p-2 rounded-xl bg-accent/10">
-                  <Map className="w-4 h-4 text-accent" />
-                </div>
-                <div>
-                  <h3 className="font-medium text-foreground text-sm">Analysis Area</h3>
-                  <p className="text-xs text-muted-foreground font-light">
-                    Click to select location
-                  </p>
+              <div className="p-4 border-b border-border/50 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-xl bg-accent/10">
+                    {metadata?.isRouteMode ? (
+                      <Route className="w-4 h-4 text-accent" />
+                    ) : (
+                      <MapIcon className="w-4 h-4 text-accent" />
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="font-medium text-foreground text-sm">
+                      {metadata?.isRouteMode ? 'Route Corridor' : 'Analysis Area'}
+                    </h3>
+                    <p className="text-xs text-muted-foreground font-light">
+                      {metadata?.isRouteMode 
+                        ? 'Driving path and nearby infrastructure' 
+                        : 'Click to select location'
+                      }
+                    </p>
+                  </div>
                 </div>
               </div>
               <div className="h-[380px]">
@@ -141,6 +165,10 @@ export default function Index() {
                   center={center}
                   radiusMiles={radius}
                   onMapClick={handleMapClick}
+                  routeGeometry={routeGeometry}
+                  poiMarkers={poiMarkers}
+                  isRouteMode={metadata?.isRouteMode || false}
+                  destination={metadata?.destination ? [metadata.destination.lat, metadata.destination.lon] : undefined}
                 />
               </div>
             </motion.div>

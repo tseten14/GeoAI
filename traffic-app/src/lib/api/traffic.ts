@@ -16,15 +16,29 @@ export interface TrafficAnalysis {
   connectivityScore: number;
   congestionScore: number;
   congestionLevel: string;
+  timeMultiplier: number;
 }
 
 export interface AnalysisMetadata {
+  isRouteMode: boolean;
   center: { lat: number; lon: number };
-  radiusMiles: number;
-  radiusKm: number;
-  areaKm2: number;
+  destination: { lat: number; lon: number } | null;
+  radiusMiles: number | null;
   elementsProcessed: number;
   timestamp: string;
+  routeDurationEstimateStr: string | null;
+}
+
+export interface POIMarker {
+  type: 'signal';
+  lat: number;
+  lon: number;
+  id: number;
+}
+
+export interface TrafficVisualData {
+  routeCoordinates: [number, number][] | null;
+  poiMarkers: POIMarker[];
 }
 
 export interface TrafficResponse {
@@ -32,20 +46,31 @@ export interface TrafficResponse {
   error?: string;
   data?: TrafficAnalysis;
   metadata?: AnalysisMetadata;
+  visualData?: TrafficVisualData;
 }
 
 export async function analyzeTraffic(
   lat: number,
   lon: number,
+  destLat?: number,
+  destLon?: number,
   radiusMiles: number = 5
 ): Promise<TrafficResponse> {
   try {
+    const payload: any = { lat, lon };
+    if (destLat && destLon) {
+      payload.destLat = destLat;
+      payload.destLon = destLon;
+    } else {
+      payload.radiusMiles = radiusMiles;
+    }
+
     const response = await fetch('/api/traffic-analysis', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ lat, lon, radiusMiles }),
+      body: JSON.stringify(payload),
     });
 
     const data = await response.json();

@@ -5,7 +5,10 @@ import {
   AlertTriangle,
   ArrowUpRight,
   ArrowDownRight,
-  Minus
+  Minus,
+  MapPin,
+  Clock,
+  Route
 } from 'lucide-react';
 import { TrafficAnalysis, AnalysisMetadata } from '@/lib/api/traffic';
 
@@ -46,6 +49,14 @@ export const AnalysisDashboard = forwardRef<HTMLDivElement, AnalysisDashboardPro
 
     const CongestionIcon = getCongestionIcon(analysis.congestionScore);
 
+    // Format the time multiplier descriptor
+    const getTimeImpactText = (multiplier: number) => {
+      if (multiplier >= 1.25) return 'Rush Hour Penalty';
+      if (multiplier > 1.0) return 'Elevated Activity';
+      if (multiplier < 1.0) return 'Off-Peak Hours';
+      return 'Standard Hours';
+    };
+
     return (
       <motion.div
         ref={ref}
@@ -59,91 +70,130 @@ export const AnalysisDashboard = forwardRef<HTMLDivElement, AnalysisDashboardPro
             <div>
               <h2 className="text-xl font-medium text-foreground">Traffic Analysis</h2>
               <p className="text-sm text-muted-foreground mt-1 font-light">
-                {metadata.areaKm2} km² • {metadata.elementsProcessed.toLocaleString()} elements
+                {metadata.elementsProcessed.toLocaleString()} infrastructure elements analyzed
               </p>
             </div>
+            
+            {/* Route Duration Badge (If Route Mode) */}
+            {metadata.isRouteMode && metadata.routeDurationEstimateStr && (
+              <div className="flex items-center gap-2 bg-secondary/80 px-4 py-2 rounded-lg border border-border/50">
+                <Route className="w-4 h-4 text-primary" />
+                <span className="text-sm font-medium">Est. Drive: {metadata.routeDurationEstimateStr}</span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Two Main Stats */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {/* Traffic Signals Card */}
+        {/* Four Main Stats Group */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {/* Traffic Signals */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.05 }}
-            className="card-elevated p-6"
+            className="card-elevated p-5 flex flex-col justify-center border-l-4 border-geo-orange"
           >
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-2xl bg-geo-orange/10">
-                <Timer className="w-6 h-6 text-geo-orange" />
+            <div className="flex items-center gap-3 mb-2">
+              <div className="p-2 rounded-xl bg-geo-orange/10">
+                <MapPin className="w-4 h-4 text-geo-orange" />
               </div>
-              <div>
-                <p className="text-sm text-muted-foreground font-light">Traffic Signals</p>
-                <p className="text-3xl font-semibold text-foreground">{analysis.trafficSignals.toLocaleString()}</p>
-              </div>
+              <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Signals</p>
             </div>
-            <p className="text-xs text-muted-foreground mt-4 font-light">
-              Signalized intersections within {metadata.radiusMiles} mi radius
-            </p>
+            <p className="text-2xl font-semibold text-foreground">{analysis.trafficSignals.toLocaleString()}</p>
           </motion.div>
 
-          {/* Traffic Congestion Card */}
+          {/* Time Multiplier Impact */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="card-elevated p-6"
+            transition={{ delay: 0.2 }}
+            className="card-elevated p-5 flex flex-col justify-center border-l-4 border-primary"
           >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className={`p-3 rounded-2xl ${getCongestionBgColor(analysis.congestionScore)}`}>
-                  <AlertTriangle className={`w-6 h-6 ${getCongestionColor(analysis.congestionScore)}`} />
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground font-light">Traffic Congestion</p>
-                  <p className="text-3xl font-semibold text-foreground">{analysis.congestionLevel}</p>
-                </div>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="p-2 rounded-xl bg-primary/10">
+                <Clock className="w-4 h-4 text-primary" />
               </div>
-              <div className="text-right">
-                <div className="flex items-center gap-1.5">
-                  <span className={`text-2xl font-semibold ${getCongestionColor(analysis.congestionScore)}`}>
-                    {analysis.congestionScore}
-                  </span>
-                  <span className="text-muted-foreground font-light text-sm">/100</span>
-                </div>
-                <CongestionIcon className={`w-4 h-4 ml-auto mt-1 ${getCongestionColor(analysis.congestionScore)}`} />
-              </div>
+              <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Time Factor</p>
             </div>
-            {/* Congestion bar */}
-            <div className="mt-4">
-              <div className="h-2 bg-border rounded-full overflow-hidden">
-                <motion.div
-                  initial={{ width: 0 }}
-                  animate={{ width: `${analysis.congestionScore}%` }}
-                  transition={{ duration: 1, ease: 'easeOut' }}
-                  className={`h-full rounded-full ${getCongestionBarColor(analysis.congestionScore)}`}
-                />
-              </div>
-              <div className="flex justify-between text-xs text-muted-foreground font-light mt-1.5">
-                <span>Minimal</span>
-                <span>Heavy</span>
-              </div>
-            </div>
+            <p className="text-xl font-semibold text-foreground flex items-baseline gap-1">
+              {analysis.timeMultiplier}x
+              <span className="text-xs text-muted-foreground font-normal ml-1">
+                ({getTimeImpactText(analysis.timeMultiplier)})
+              </span>
+            </p>
           </motion.div>
         </div>
+
+        {/* Main Traffic Congestion Card */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.25 }}
+          className="card-elevated p-6 bg-gradient-to-br from-card to-secondary/30"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-4">
+              <div className={`p-3 rounded-2xl ${getCongestionBgColor(analysis.congestionScore)}`}>
+                <AlertTriangle className={`w-6 h-6 ${getCongestionColor(analysis.congestionScore)}`} />
+              </div>
+              <div>
+                <p className="text-sm text-foreground/80 font-medium">Calculated Congestion Rating</p>
+                <p className={`text-4xl font-bold ${getCongestionColor(analysis.congestionScore)} tracking-tight mt-1`}>
+                  {analysis.congestionLevel}
+                </p>
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="flex items-center justify-end gap-1.5 mb-1">
+                <span className={`text-3xl font-bold ${getCongestionColor(analysis.congestionScore)}`}>
+                  {analysis.congestionScore}
+                </span>
+                <span className="text-muted-foreground font-medium text-sm mt-1">/100</span>
+              </div>
+              <div className="flex items-center justify-end gap-1 text-xs text-muted-foreground font-medium">
+                Score 
+                <CongestionIcon className={`w-3 h-3 ${getCongestionColor(analysis.congestionScore)}`} />
+              </div>
+            </div>
+          </div>
+          
+          {/* Congestion bar */}
+          <div className="mt-8">
+            <div className="h-3 bg-border/60 rounded-full overflow-hidden shadow-inner">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${analysis.congestionScore}%` }}
+                transition={{ duration: 1.5, ease: 'easeOut', delay: 0.4 }}
+                className={`h-full rounded-full ${getCongestionBarColor(analysis.congestionScore)} relative`}
+              >
+                <div className="absolute inset-0 bg-white/20 w-full h-full animate-scrolling-stripes" style={{
+                   backgroundImage: 'linear-gradient(45deg,rgba(255,255,255,.15) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.15) 50%,rgba(255,255,255,.15) 75%,transparent 75%,transparent)',
+                   backgroundSize: '1rem 1rem'
+                 }} />
+              </motion.div>
+            </div>
+            <div className="flex justify-between text-xs text-muted-foreground font-medium mt-2 uppercase tracking-wide">
+              <span>Ideal</span>
+              <span className="text-destructive/80">Gridlock</span>
+            </div>
+          </div>
+        </motion.div>
 
         {/* Metadata Footer */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
+          transition={{ delay: 0.3 }}
           className="text-xs text-muted-foreground font-mono p-4 rounded-xl bg-secondary/30 border border-border/40"
         >
           <div className="flex flex-wrap gap-x-6 gap-y-1.5 font-light">
             <span>Center: {metadata.center.lat.toFixed(4)}, {metadata.center.lon.toFixed(4)}</span>
-            <span>Radius: {metadata.radiusMiles} mi</span>
-            <span>Area: {metadata.areaKm2} km²</span>
+            {metadata.isRouteMode && metadata.destination ? (
+              <span>Dest: {metadata.destination.lat.toFixed(4)}, {metadata.destination.lon.toFixed(4)}</span>
+            ) : (
+              <span>Radius: {metadata.radiusMiles} mi</span>
+            )}
+            <span>Roads: {analysis.roads.total.toLocaleString()}</span>
             <span>{new Date(metadata.timestamp).toLocaleString()}</span>
           </div>
         </motion.div>

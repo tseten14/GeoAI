@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const polyline = require('@mapbox/polyline');
+const axios = require('axios');
 
 function milesToMeters(miles) {
     return miles * 1609.34;
@@ -16,6 +18,24 @@ function getDistanceFromLatLonInM(lat1, lon1, lat2, lon2) {
         Math.sin(dLon / 2) * Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c; // Distance in m
+}
+
+async function fetchRouteFromOSRM(lat1, lon1, lat2, lon2) {
+    try {
+        const url = `https://router.project-osrm.org/route/v1/driving/${lon1},${lat1};${lon2},${lat2}?overview=full`;
+        const response = await axios.get(url, { timeout: 10000 });
+        if (response.data.code === 'Ok' && response.data.routes.length > 0) {
+            const route = response.data.routes[0];
+            return {
+                geometry: route.geometry,
+                distanceMeters: route.distance,
+                durationSeconds: route.duration,
+            };
+        }
+        throw new Error('OSRM returned no routes');
+    } catch (error) {
+        throw new Error(`Failed to fetch route: ${error.message}`);
+    }
 }
 
 async function queryOverpassWithRetry(query, maxRetries = 3) {
@@ -69,40 +89,72 @@ async function queryOverpassWithRetry(query, maxRetries = 3) {
 
 router.post('/traffic-analysis', async (req, res) => {
     try {
-        const { lat, lon, radiusMiles = 5 } = req.body;
+        const { lat, lon, destLat, destLon, radiusMiles = 5 } = req.body;
 
         if (!lat || !lon) {
-            return res.status(400).json({ success: false, error: 'Latitude and longitude are required' });
+            return res.status(400).json({ success: false, error: 'Origin latitude and longitude are required' });
         }
 
-        const effectiveRadius = Math.min(radiusMiles, 5);
-        const radiusMeters = milesToMeters(effectiveRadius);
-        const areaKm2 = Math.PI * (effectiveRadius * 1.60934) ** 2;
+        const isRouteMode = !!(destLat && destLon);
+        let routeData = null;
+        let queryAreaStr = '';
+        let searchRadiusMeters = 0;
+        let routeGeoJsonCoords = [];
 
-        console.log(`Analyzing traffic around (${lat}, ${lon}) with radius ${effectiveRadius} miles (${Math.round(radiusMeters)}m)`);
+        if (isRouteMode) {
+            console.log(`Fetching route from (${lat}, ${lon}) to (${destLat}, ${destLon})`);
+            routeData = await fetchRouteFromOSRM(lat, lon, destLat, destLon);
+            const decodedCoords = polyline.decode(routeData.geometry);
+            // Sample coordinates to prevent massive Overpass queries on long routes
+            // The Overpass 'around' feature using a polyline creates a massive complex polygon buffer
+            // which often times out on the public free API when > 15-20 points are used.
+            // We sample it down to 15 key waypoints for the query, which provides a fast and "good enough" corridor analysis.
+            const maxPoints = 15;
+            const step = Math.max(1, Math.floor(decodedCoords.length / maxPoints));
+            
+            // Extract roughly evenly spaced points, making sure to preserve origin and destination
+            const sampledCoords = [];
+            for (let i = 0; i < decodedCoords.length; i += step) {
+                sampledCoords.push(decodedCoords[i]);
+            }
+            if (sampledCoords[sampledCoords.length - 1] !== decodedCoords[decodedCoords.length - 1]) {
+                sampledCoords.push(decodedCoords[decodedCoords.length - 1]);
+            }
+            
+            // Format for Overpass `around` polyline syntax: lat1,lon1,lat2,lon2,...
+            const overpassPolyline = sampledCoords.map(coord => `${coord[0]},${coord[1]}`).join(',');
+            
+            routeGeoJsonCoords = decodedCoords.map(coord => [coord[0], coord[1]]); // Full geometry for frontend map rendering
 
-        // Using `out body geom` gets the exact point coordinates for each node in a way, 
-        // plus the node IDs (needed for intersection calculation) and tags.
+            // In route mode, search 250 meters around the simplified route line
+            queryAreaStr = `(around:250,${overpassPolyline})`;
+        } else {
+            const effectiveRadius = Math.min(radiusMiles, 5);
+            searchRadiusMeters = milesToMeters(effectiveRadius);
+            console.log(`Analyzing radius around (${lat}, ${lon}) with radius ${effectiveRadius} miles`);
+            queryAreaStr = `(around:${searchRadiusMeters},${lat},${lon})`;
+        }
+
         const roadsQuery = `
       [out:json][timeout:45];
-      way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|service|unclassified|living_street)$"](around:${radiusMeters},${lat},${lon});
+      way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|service|unclassified|living_street)$"]${queryAreaStr};
       out body geom;
     `;
 
         const infrastructureQuery = `
       [out:json][timeout:30];
       (
-        node["highway"="traffic_signals"](around:${radiusMeters},${lat},${lon});
-        node["highway"="bus_stop"](around:${radiusMeters},${lat},${lon});
-        node["railway"="station"](around:${radiusMeters},${lat},${lon});
-        way["amenity"="parking"](around:${radiusMeters},${lat},${lon});
-        way["bridge"="yes"]["highway"](around:${radiusMeters},${lat},${lon});
-        way["tunnel"="yes"]["highway"](around:${radiusMeters},${lat},${lon});
+        node["highway"="traffic_signals"]${queryAreaStr};
+        node["highway"="bus_stop"]${queryAreaStr};
+        node["railway"="station"]${queryAreaStr};
+        way["amenity"="parking"]${queryAreaStr};
+        way["bridge"="yes"]["highway"]${queryAreaStr};
+        way["tunnel"="yes"]["highway"]${queryAreaStr};
       );
       out center tags;
     `;
 
-        console.log('Fetching road data...');
+        console.log('Fetching road and infrastructure data...');
         const [roadElements, infraElements] = await Promise.all([
             queryOverpassWithRetry(roadsQuery),
             queryOverpassWithRetry(infrastructureQuery),
@@ -114,7 +166,7 @@ router.post('/traffic-analysis', async (req, res) => {
             roads: {
                 total: 0,
                 byType: {},
-                totalLength: 0,
+                totalLength: 0, // In meters
             },
             intersections: 0,
             trafficSignals: 0,
@@ -126,48 +178,58 @@ router.post('/traffic-analysis', async (req, res) => {
             bridgesAndTunnels: 0,
             roadDensity: 0,
             connectivityScore: 0,
+            congestionScore: 0,
+            congestionLevel: 'Minimal',
+            timeMultiplier: 1.0
         };
 
         const nodeConnections = new Map();
         const namedRoads = new Set();
-        let unnamedRoadsCount = 0;
+        let weightedRoadScore = 0; // Heavier weight for primary/motorways vs residential
+        const poiMarkers = []; 
 
-        // Process roads
+        if (isRouteMode) {
+            // Simplified metric for route length
+            analysis.roads.totalLength = routeData.distanceMeters;
+        }
+
         for (const element of roadElements) {
             if (element.type === 'way' && element.tags?.highway) {
                 const roadType = element.tags.highway;
 
                 if (element.tags.name) {
                     namedRoads.add(element.tags.name);
-                } else {
-                    unnamedRoadsCount++;
                 }
 
                 analysis.roads.byType[roadType] = (analysis.roads.byType[roadType] || 0) + 1;
 
-                // Calculate actual length using geometry
-                let wayLength = 0;
-                if (element.geometry && element.geometry.length > 1) {
-                    for (let i = 0; i < element.geometry.length - 1; i++) {
-                        const p1 = element.geometry[i];
-                        const p2 = element.geometry[i + 1];
-                        if (p1 && p2 && p1.lat && p1.lon && p2.lat && p2.lon) {
-                            wayLength += getDistanceFromLatLonInM(p1.lat, p1.lon, p2.lat, p2.lon);
+                // Add weighted scores based on road capacity/typical congestion
+                if (['motorway', 'trunk', 'primary'].includes(roadType)) weightedRoadScore += 3;
+                else if (['secondary', 'tertiary'].includes(roadType)) weightedRoadScore += 2;
+                else weightedRoadScore += 1;
+
+                if (!isRouteMode) {
+                    let wayLength = 0;
+                    if (element.geometry && element.geometry.length > 1) {
+                        for (let i = 0; i < element.geometry.length - 1; i++) {
+                            const p1 = element.geometry[i];
+                            const p2 = element.geometry[i + 1];
+                            if (p1 && p2 && p1.lat && p1.lon && p2.lat && p2.lon) {
+                                wayLength += getDistanceFromLatLonInM(p1.lat, p1.lon, p2.lat, p2.lon);
+                                // Optional: You could collect geometries for drawing roads here,
+                                // but we omit it for performance unless strictly needed
+                            }
                         }
                     }
-                }
-                analysis.roads.totalLength += wayLength;
-
-                if (element.tags.oneway === 'yes') {
-                    analysis.oneWayRoads++;
+                    analysis.roads.totalLength += wayLength;
                 }
 
+                if (element.tags.oneway === 'yes') analysis.oneWayRoads++;
                 if (element.tags.maxspeed) {
                     const speedLimit = element.tags.maxspeed;
                     analysis.speedLimits[speedLimit] = (analysis.speedLimits[speedLimit] || 0) + 1;
                 }
 
-                // Count node connections for true intersections
                 if (element.nodes) {
                     for (const nodeId of element.nodes) {
                         nodeConnections.set(nodeId, (nodeConnections.get(nodeId) || 0) + 1);
@@ -176,88 +238,91 @@ router.post('/traffic-analysis', async (req, res) => {
             }
         }
 
-        // "Total Roads" = only distinct named streets (what a person would actually call a "road").
-        // Unnamed service roads, driveways, parking lot lanes, and alleys still contribute to
-        // road length and the type breakdown, but don't inflate the headline count.
         analysis.roads.total = namedRoads.size;
 
-        // Process infrastructure
         for (const element of infraElements) {
-            if (element.type === 'node') {
-                if (element.tags?.highway === 'traffic_signals') {
-                    analysis.trafficSignals++;
-                }
-                if (element.tags?.highway === 'bus_stop') {
-                    analysis.busStops++;
-                }
-                if (element.tags?.railway === 'station') {
-                    analysis.railwayStations++;
-                }
-            }
+            const elLat = element.lat || (element.center && element.center.lat);
+            const elLon = element.lon || (element.center && element.center.lon);
 
-            if (element.type === 'way') {
-                if (element.tags?.amenity === 'parking') {
-                    analysis.parkingAreas++;
-                }
-                if (element.tags?.bridge === 'yes' || element.tags?.tunnel === 'yes') {
-                    analysis.bridgesAndTunnels++;
-                }
+            // Tally tags and store marker info for frontend mapping
+            if (element.tags?.highway === 'traffic_signals') {
+                analysis.trafficSignals++;
+                if (elLat && elLon) poiMarkers.push({ type: 'signal', lat: elLat, lon: elLon, id: element.id });
+            }
+            if (element.tags?.highway === 'bus_stop') {
+                analysis.busStops++;
+            }
+            if (element.tags?.railway === 'station') {
+                analysis.railwayStations++;
+            }
+            if (element.tags?.amenity === 'parking') {
+                analysis.parkingAreas++;
+            }
+            if (element.tags?.bridge === 'yes' || element.tags?.tunnel === 'yes') {
+                analysis.bridgesAndTunnels++;
             }
         }
 
-        // Estimate intersections (nodes connected to 3+ roads)
         for (const connections of nodeConnections.values()) {
             if (connections >= 3) {
                 analysis.intersections++;
             }
         }
 
-        // Calculate road density (km of road per km²)
+        const areaKm2 = isRouteMode 
+            ? (analysis.roads.totalLength / 1000) * 0.1 // rough proxy for route corridor
+            : Math.PI * (searchRadiusMeters / 1000) ** 2;
+
         const totalLengthKm = analysis.roads.totalLength / 1000;
-        analysis.roadDensity = Math.round((totalLengthKm / areaKm2) * 100) / 100;
+        analysis.roadDensity = Math.round((totalLengthKm / areaKm2) * 100) / 100 || 0;
         analysis.roads.totalLength = Math.round(totalLengthKm * 100) / 100;
 
-        // Calculate connectivity score (0-100)
-        const baseScore = Math.min(analysis.intersections / 100, 1) * 30;
-        const signalScore = Math.min(analysis.trafficSignals / 50, 1) * 20;
-        const densityScore = Math.min(analysis.roadDensity / 15, 1) * 30;
-        const transitScore = Math.min((analysis.busStops + analysis.railwayStations) / 20, 1) * 20;
-        analysis.connectivityScore = Math.round(baseScore + signalScore + densityScore + transitScore);
+        // Weighted Infrastructure Congestion Math
+        const activeUnitsKm2 = areaKm2 > 0 ? areaKm2 : 1; 
 
-        // Estimate congestion (0-100) based on infrastructure factors
-        // Higher signal density per road = more congestion
-        // Higher intersection density = more congestion
-        // More one-way roads relative to total = more congestion (traffic management)
-        const signalDensityPerKm2 = analysis.trafficSignals / areaKm2;
-        const intersectionDensityPerKm2 = analysis.intersections / areaKm2;
-        const oneWayRatio = analysis.roads.total > 0 ? analysis.oneWayRoads / roadElements.length : 0;
+        // Rush Hour Time Multiplier
+        // We evaluate based on server's local time for simplicity. 
+        // 7-9 AM (+25%), 4-6 PM (+30%)
+        const currentHour = new Date().getHours();
+        if (currentHour >= 7 && currentHour < 9) analysis.timeMultiplier = 1.25;
+        else if (currentHour >= 16 && currentHour < 18) analysis.timeMultiplier = 1.30;
+        else if (currentHour >= 11 && currentHour < 14) analysis.timeMultiplier = 1.10; // lunch
+        else if (currentHour < 5 || currentHour > 22) analysis.timeMultiplier = 0.60; // night time
+        
+        const signalDensityScore = Math.min((analysis.trafficSignals / activeUnitsKm2) / 15, 1) * 30; // 15 signals/km² = max 30pts
+        const intersectionsScore = Math.min((analysis.intersections / activeUnitsKm2) / 50, 1) * 20;
+        const heavyRoadsScore = Math.min((weightedRoadScore / activeUnitsKm2) / 60, 1) * 20; 
+        const oneWayRatio = roadElements.length > 0 ? analysis.oneWayRoads / roadElements.length : 0;
+        const managementScore = oneWayRatio * 10;
 
-        const congestionFromSignals = Math.min(signalDensityPerKm2 / 15, 1) * 35;       // 15 signals/km² = full score
-        const congestionFromIntersections = Math.min(intersectionDensityPerKm2 / 50, 1) * 35; // 50 intersections/km² = full
-        const congestionFromOneWay = oneWayRatio * 15;                                    // one-way management = congestion indicator
-        const congestionFromDensity = Math.min(analysis.roadDensity / 25, 1) * 15;       // very dense road network
+        // Apply Time Multiplier to Base Score, distributing the leftover 20 points originally allocated to schools/hospitals
+        let rawCongestion = (signalDensityScore * 1.3) + (intersectionsScore * 1.3) + (heavyRoadsScore * 1.3) + managementScore;
+        analysis.congestionScore = Math.min(Math.round(rawCongestion * analysis.timeMultiplier), 100);
 
-        analysis.congestionScore = Math.round(
-            congestionFromSignals + congestionFromIntersections + congestionFromOneWay + congestionFromDensity
-        );
         analysis.congestionLevel =
-            analysis.congestionScore >= 70 ? 'Heavy' :
-                analysis.congestionScore >= 45 ? 'Moderate' :
-                    analysis.congestionScore >= 20 ? 'Light' : 'Minimal';
+            analysis.congestionScore >= 75 ? 'Severe' :
+            analysis.congestionScore >= 60 ? 'Heavy' :
+            analysis.congestionScore >= 40 ? 'Moderate' :
+            analysis.congestionScore >= 20 ? 'Light' : 'Minimal';
 
-        console.log('Analysis complete. Signals:', analysis.trafficSignals, 'Congestion:', analysis.congestionScore);
+        console.log(`Analysis complete. Signals: ${analysis.trafficSignals}. Final Score: ${analysis.congestionScore} (${analysis.timeMultiplier}x Time Multiplier)`);
 
         return res.json({
             success: true,
             data: analysis,
             metadata: {
+                isRouteMode,
                 center: { lat, lon },
-                radiusMiles: effectiveRadius,
-                radiusKm: Math.round(effectiveRadius * 1.60934 * 100) / 100,
-                areaKm2: Math.round(areaKm2 * 100) / 100,
+                destination: isRouteMode ? { lat: destLat, lon: destLon } : null,
+                radiusMiles: isRouteMode ? null : milesToMeters(searchRadiusMeters) / 1609.34,
                 elementsProcessed: roadElements.length + infraElements.length,
                 timestamp: new Date().toISOString(),
+                routeDurationEstimateStr: isRouteMode ? `${Math.round(routeData.durationSeconds / 60)} minutes` : null
             },
+            visualData: {
+                routeCoordinates: isRouteMode ? routeGeoJsonCoords : null,
+                poiMarkers: poiMarkers // Send the max 1500 limit points for Leaflet overlay
+            }
         });
     } catch (error) {
         console.error('Error analyzing traffic:', error);

@@ -45,9 +45,9 @@ block content
                 tr.tablerow(dataobject!=jsonSafe)
                   td #{object.Prefix}
                   td
-                    a(href='/traffic/?lat=' + object.Latitude + '&lng=' + object.Longitude + '&radius=5') #{object.Firstname}
+                    a(href='/traffic/?lat=' + object.Latitude + '&lng=' + object.Longitude + '&radius=1') #{object.Firstname}
                   td
-                    a(href='/traffic/?lat=' + object.Latitude + '&lng=' + object.Longitude + '&radius=5') #{object.Lastname}
+                    a(href='/traffic/?lat=' + object.Latitude + '&lng=' + object.Longitude + '&radius=1') #{object.Lastname}
                   td #{object.Street}
                   td #{object.City}
                   td #{object.State}

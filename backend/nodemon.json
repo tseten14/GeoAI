@@ -1,0 +1,5 @@
+{
+  "watch": [".", "../database/config.js"],
+  "ext": "js,json",
+  "ignore": ["node_modules"]
+}

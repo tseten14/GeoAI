@@ -1,0 +1,265 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Aligned with Geocoded Contact List — dark shell, DM Sans, blue / cyan accents */
+
+@layer base {
+  :root {
+    --background: 210 24% 8%;
+    --foreground: 210 20% 95%;
+
+    --card: 215 22% 16%;
+    --card-foreground: 210 20% 95%;
+
+    --popover: 215 22% 14%;
+    --popover-foreground: 210 20% 95%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 215 18% 22%;
+    --secondary-foreground: 210 20% 95%;
+
+    --muted: 215 18% 18%;
+    --muted-foreground: 213 12% 58%;
+
+    --accent: 189 94% 53%;
+    --accent-foreground: 210 24% 8%;
+
+    --destructive: 0 72% 58%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 43 96% 56%;
+    --warning-foreground: 210 24% 12%;
+
+    --border: 214 16% 22%;
+    --input: 214 16% 22%;
+    --ring: 217 91% 60%;
+
+    --radius: 0.75rem;
+
+    --geo-cyan: 189 94% 53%;
+    --geo-blue: 217 91% 60%;
+    --geo-purple: 262 60% 58%;
+    --geo-pink: 330 65% 58%;
+    --geo-orange: 25 95% 55%;
+    --geo-green: 152 70% 45%;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+    --shadow-md: 0 8px 32px rgba(0, 0, 0, 0.35);
+    --shadow-lg: 0 12px 48px rgba(0, 0, 0, 0.45);
+
+    --sidebar-background: 215 22% 14%;
+    --sidebar-foreground: 210 20% 95%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 215 18% 20%;
+    --sidebar-accent-foreground: 210 20% 95%;
+    --sidebar-border: 214 16% 22%;
+    --sidebar-ring: 217 91% 60%;
+  }
+
+  .dark {
+    --background: 210 24% 8%;
+    --foreground: 210 20% 95%;
+    --card: 215 22% 16%;
+    --card-foreground: 210 20% 95%;
+    --popover: 215 22% 14%;
+    --popover-foreground: 210 20% 95%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 215 18% 22%;
+    --secondary-foreground: 210 20% 95%;
+    --muted: 215 18% 18%;
+    --muted-foreground: 213 12% 58%;
+    --accent: 189 94% 53%;
+    --accent-foreground: 210 24% 8%;
+    --destructive: 0 72% 58%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 16% 22%;
+    --input: 214 16% 22%;
+    --ring: 217 91% 60%;
+    --sidebar-background: 215 22% 14%;
+    --sidebar-foreground: 210 20% 95%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 215 18% 20%;
+    --sidebar-accent-foreground: 210 20% 95%;
+    --sidebar-border: 214 16% 22%;
+    --sidebar-ring: 217 91% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply text-foreground antialiased;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    min-height: 100vh;
+    background-color: hsl(var(--background));
+    background-image:
+      radial-gradient(ellipse 120% 80% at 50% -20%, rgba(59, 130, 246, 0.18), transparent),
+      radial-gradient(ellipse 60% 40% at 100% 50%, rgba(34, 211, 238, 0.08), transparent);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  code,
+  pre,
+  .mono {
+    font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Monaco, Consolas, monospace;
+    font-weight: 400;
+  }
+}
+
+@layer components {
+  .gradient-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, hsl(217, 91%, 60%) 0%, hsl(189, 94%, 53%) 100%);
+  }
+
+  /* Match contact list “card” — solid elevated surface */
+  .card-elevated {
+    @apply rounded-[var(--radius)] border;
+    background: hsl(var(--card));
+    border-color: hsl(var(--border));
+    box-shadow: var(--shadow-md);
+    transition: box-shadow 0.2s ease;
+  }
+
+  .card-elevated:hover {
+    box-shadow: var(--shadow-lg);
+  }
+
+  .stat-card {
+    @apply rounded-xl p-4 border transition-all duration-200;
+    background: hsl(var(--secondary) / 0.5);
+    border-color: hsl(var(--border));
+  }
+
+  .stat-card:hover {
+    background: hsl(var(--secondary) / 0.75);
+  }
+
+  .data-grid {
+    @apply grid gap-3;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+
+  .pipeline-step {
+    @apply relative pl-8 pb-5;
+  }
+
+  .pipeline-step::before {
+    content: '';
+    @apply absolute left-3 top-3 bottom-0 w-px bg-border;
+  }
+
+  .pipeline-step::after {
+    content: '';
+    @apply absolute left-1.5 top-1.5 w-3 h-3 rounded-full bg-primary;
+    box-shadow: 0 0 10px hsl(var(--primary) / 0.45);
+  }
+
+  .pipeline-step:last-child::before {
+    display: none;
+  }
+
+  .btn-apple {
+    @apply font-semibold tracking-tight;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .btn-apple:hover {
+    transform: translateY(-1px);
+  }
+
+  .btn-apple:active {
+    transform: translateY(0);
+  }
+
+  /* App shell — same max width as Geocoded Contact List */
+  .geo-main-shell {
+    max-width: 1280px;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
+  }
+}
+
+@layer utilities {
+  .animate-pulse-soft {
+    animation: pulse-soft 2.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse-soft {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.72;
+    }
+  }
+}
+
+/* Leaflet — dark UI to match */
+.leaflet-container {
+  background: hsl(215, 20%, 12%) !important;
+  border-radius: var(--radius);
+}
+
+.leaflet-container img.leaflet-tile {
+  max-width: none !important;
+  max-height: none !important;
+}
+
+.leaflet-tile-pane {
+  filter: saturate(0.92) brightness(1.05);
+}
+
+.leaflet-control-zoom a {
+  background: hsl(215, 22%, 18%) !important;
+  color: hsl(210, 20%, 95%) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  font-weight: 500 !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background: hsl(215, 22%, 24%) !important;
+}
+
+.leaflet-control-attribution {
+  background: hsl(215 22% 12% / 0.92) !important;
+  color: hsl(213 12% 58%) !important;
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.leaflet-control-attribution a {
+  color: hsl(217, 91%, 60%) !important;
+}

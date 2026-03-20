@@ -1,0 +1,36 @@
+{
+  "name": "geocoded-contacts-api",
+  "version": "0.0.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "@mapbox/polyline": "^1.2.1",
+    "axios": "^1.13.6",
+    "bcrypt": "^5.0.1",
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "~1.4.4",
+    "debug": "~2.6.9",
+    "ejs": "~2.6.1",
+    "eslint": "^6.7.2",
+    "express": "~4.16.1",
+    "express-session": "^1.17.0",
+    "favicon": "^0.0.2",
+    "http-errors": "~1.6.3",
+    "install": "^0.13.0",
+    "mapbox-geocoding": "^0.1.5",
+    "method-override": "^3.0.0",
+    "mongodb": "^3.7.3",
+    "morgan": "~1.9.1",
+    "passport": "^0.4.1",
+    "passport-local": "^1.0.0",
+    "serve-favicon": "^2.5.0",
+    "v": "^0.3.0"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.2"
+  }
+}

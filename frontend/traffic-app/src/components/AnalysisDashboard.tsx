@@ -1,13 +1,11 @@
 import { forwardRef } from 'react';
 import { motion } from 'framer-motion';
 import {
-  Timer,
   AlertTriangle,
   ArrowUpRight,
   ArrowDownRight,
   Minus,
   MapPin,
-  Clock,
   Route
 } from 'lucide-react';
 import { TrafficAnalysis, AnalysisMetadata, RouteData } from '@/lib/api/traffic';
@@ -50,14 +48,6 @@ export const AnalysisDashboard = forwardRef<HTMLDivElement, AnalysisDashboardPro
 
     const CongestionIcon = getCongestionIcon(analysis.congestionScore);
 
-    // Format the time multiplier descriptor
-    const getTimeImpactText = (multiplier: number) => {
-      if (multiplier >= 1.25) return 'Rush Hour Penalty';
-      if (multiplier > 1.0) return 'Elevated Activity';
-      if (multiplier < 1.0) return 'Off-Peak Hours';
-      return 'Standard Hours';
-    };
-
     return (
       <motion.div
         ref={ref}
@@ -71,8 +61,18 @@ export const AnalysisDashboard = forwardRef<HTMLDivElement, AnalysisDashboardPro
             <div>
               <h2 className="text-xl font-medium text-foreground">Traffic Analysis</h2>
               <p className="text-sm text-muted-foreground mt-1 font-light">
-                {metadata.elementsProcessed.toLocaleString()} infrastructure elements analyzed
+                {metadata.elementsProcessed.toLocaleString()} OSM features matched (roads, transit, and related objects)
               </p>
+              {metadata.routeAnalysisSkipped && metadata.routeAnalysisSkipReason && (
+                <p className="text-sm text-warning mt-2 font-light border-l-2 border-warning pl-3">
+                  {metadata.routeAnalysisSkipReason}
+                </p>
+              )}
+              {metadata.routeCorridorLimitedScan && metadata.routeCorridorLimitedScanNote && (
+                <p className="text-sm text-muted-foreground mt-2 font-light border-l-2 border-border pl-3">
+                  {metadata.routeCorridorLimitedScanNote}
+                </p>
+              )}
             </div>
             {/* Route Duration Badge (If Route Mode) */}
             {metadata.isRouteMode && metadata.routeDurationEstimateStr && (
@@ -95,47 +95,22 @@ export const AnalysisDashboard = forwardRef<HTMLDivElement, AnalysisDashboardPro
           </div>
         </div>
 
-        {/* Four Main Stats Group */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {/* Traffic Signals */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            whileHover={{ scale: 1.03 }}
-            transition={{ type: "spring", stiffness: 300, damping: 20, delay: 0.1 }}
-            className="card-elevated p-5 flex flex-col justify-center border-l-4 border-geo-orange cursor-default"
-          >
-            <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 rounded-xl bg-geo-orange/10">
-                <MapPin className="w-4 h-4 text-geo-orange" />
-              </div>
-              <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Signals</p>
+        {/* Signals */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          whileHover={{ scale: 1.01 }}
+          transition={{ type: "spring", stiffness: 300, damping: 20, delay: 0.1 }}
+          className="card-elevated p-5 flex flex-col justify-center border-l-4 border-geo-orange cursor-default max-w-xl"
+        >
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 rounded-xl bg-geo-orange/10">
+              <MapPin className="w-4 h-4 text-geo-orange" />
             </div>
-            <p className="text-2xl font-semibold text-foreground">{analysis.trafficSignals.toLocaleString()}</p>
-          </motion.div>
-
-          {/* Time Multiplier Impact */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            whileHover={{ scale: 1.03 }}
-            transition={{ type: "spring", stiffness: 300, damping: 20, delay: 0.2 }}
-            className="card-elevated p-5 flex flex-col justify-center border-l-4 border-primary cursor-default"
-          >
-            <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 rounded-xl bg-primary/10">
-                <Clock className="w-4 h-4 text-primary" />
-              </div>
-              <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Time Factor</p>
-            </div>
-            <p className="text-xl font-semibold text-foreground flex items-baseline gap-1">
-              {analysis.timeMultiplier}x
-              <span className="text-xs text-muted-foreground font-normal ml-1">
-                ({getTimeImpactText(analysis.timeMultiplier)})
-              </span>
-            </p>
-          </motion.div>
-        </div>
+            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Signals</p>
+          </div>
+          <p className="text-2xl font-semibold text-foreground">{analysis.trafficSignals.toLocaleString()}</p>
+        </motion.div>
 
         {/* Main Traffic Congestion Card */}
         <motion.div

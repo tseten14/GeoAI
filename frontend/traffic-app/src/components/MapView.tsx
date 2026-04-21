@@ -1,8 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.heat'; // Import the heatmap plugin
 import { POIMarker, RouteData } from '@/lib/api/traffic';
+import { filterPoisWithinRadiusMiles } from '@/lib/geo';
 
 interface MapViewProps {
   center: [number, number];
@@ -29,6 +30,13 @@ export function MapView({
   const mapInstanceRef = useRef<L.Map | null>(null);
   const layersRef = useRef<L.LayerGroup | null>(null);
   const heatLayerRef = useRef<L.HeatLayer | null>(null);
+
+  // Area mode: only show POIs inside the same disk as the dashed circle (defense in depth vs stale center/API drift).
+  const poisForMap = useMemo(() => {
+    if (!poiMarkers?.length) return poiMarkers ?? [];
+    if (isRouteMode) return poiMarkers;
+    return filterPoisWithinRadiusMiles(poiMarkers, center[0], center[1], radiusMiles);
+  }, [poiMarkers, isRouteMode, center, radiusMiles]);
 
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
@@ -95,8 +103,8 @@ export function MapView({
     });
     L.marker(center, { icon: originIcon }).addTo(layerGroup);
 
-    // 2. Draw destination and routes (If Route Mode)
-    if (isRouteMode && destination) {
+    // 2. Driving route: never fall back to the radius circle when isRouteMode is true (missing dest alone used to draw the wrong layer).
+    if (isRouteMode) {
       const destIcon = L.divIcon({
         className: 'custom-marker',
         html: `
@@ -110,10 +118,11 @@ export function MapView({
         iconSize: [20, 20],
         iconAnchor: [10, 10],
       });
-      L.marker(destination, { icon: destIcon }).addTo(layerGroup);
+      if (destination) {
+        L.marker(destination, { icon: destIcon }).addTo(layerGroup);
+      }
 
       if (routes && routes.length > 0) {
-        // Draw alternate back-routes first so primary draws on top
         for (let i = routes.length - 1; i >= 0; i--) {
             const isPrimary = i === 0;
             const route = routes[i];
@@ -127,14 +136,18 @@ export function MapView({
               dashArray: isPrimary ? undefined : '10, 10'
             }).addTo(layerGroup);
             
-            // Auto-fit map to the PRIMARY route line
             if (isPrimary) {
                map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
             }
         }
+      } else if (destination) {
+        const b = L.latLngBounds([center, destination]);
+        map.fitBounds(b, { padding: [50, 50] });
+      } else {
+        map.setView(center, 11);
       }
     } else {
-      // 3. Draw Radius Circle (If Area Mode)
+      // 3. Draw Radius Circle (Area Mode)
       const radiusMeters = radiusMiles * 1609.34;
       const circle = L.circle(center, {
         radius: radiusMeters,
@@ -145,52 +158,57 @@ export function MapView({
         dashArray: '6, 6',
       }).addTo(layerGroup);
       
-      // Auto-fit to circle bounds
       map.fitBounds(circle.getBounds(), { padding: [20, 20] });
     }
 
-    // 4. Draw Heatmap or Points
-    if (poiMarkers && poiMarkers.length > 0) {
-      if (poiDisplayMode === 'heatmap') {
-        const heatData = poiMarkers.map(poi => [poi.lat, poi.lon, 1]); 
+    // 4. Transit / signals heatmap or points (signals, bus stops, rail — same layer for density)
+    if (poisForMap && poisForMap.length > 0) {
+      const labelFor = (t: POIMarker['type']) =>
+        t === 'signal' ? 'Traffic signal' : t === 'bus_stop' ? 'Bus stop' : 'Rail station';
 
-        // @ts-ignore
+      if (poiDisplayMode === 'heatmap') {
+        const heatData = poisForMap.map((poi) => [poi.lat, poi.lon, 1] as [number, number, number]);
+
+        // @ts-expect-error leaflet.heat extends L
         heatLayerRef.current = L.heatLayer(heatData, {
-            radius: 20,
-            blur: 15,
-            maxZoom: 14,
-            gradient: {
-                0.4: 'lime',
-                0.6: 'cyan',
-                0.7: 'blue',
-                0.8: 'yellow',
-                1.0: 'red'
-            }
-        }).addTo(map);
+          radius: 28,
+          blur: 22,
+          minOpacity: 0.35,
+          maxZoom: 18,
+          max: 1.2,
+          gradient: {
+            0.35: '#22c55e',
+            0.55: '#06b6d4',
+            0.7: '#3b82f6',
+            0.85: '#eab308',
+            1.0: '#ef4444',
+          },
+        });
+        heatLayerRef.current.addTo(map);
       } else {
-        // Draw individual points
-        poiMarkers.forEach(poi => {
-           const typeLabel = 'Traffic Signal';
-           
-           L.circleMarker([poi.lat, poi.lon], {
-              radius: 5,
-              fillColor: '#FF9500',
-              color: '#FFFFFF',
-              weight: 1.5,
-              opacity: 1,
-              fillOpacity: 0.9
-           }).bindPopup(`<div class="text-sm font-medium">${typeLabel}</div>`).addTo(layerGroup);
+        poisForMap.forEach((poi) => {
+          const color =
+            poi.type === 'signal' ? '#FF9500' : poi.type === 'bus_stop' ? '#007AFF' : '#5856D6';
+          L.circleMarker([poi.lat, poi.lon], {
+            radius: 6,
+            fillColor: color,
+            color: '#FFFFFF',
+            weight: 1.5,
+            opacity: 1,
+            fillOpacity: 0.92,
+          })
+            .bindPopup(`<div class="text-sm font-medium">${labelFor(poi.type)}</div>`)
+            .addTo(layerGroup);
         });
       }
     }
 
-  }, [center, radiusMiles, routes, poiMarkers, isRouteMode, destination, poiDisplayMode]);
+  }, [center, radiusMiles, routes, poisForMap, isRouteMode, destination, poiDisplayMode]);
 
   return (
     <div 
       ref={mapRef} 
-      className="w-full h-full rounded-xl overflow-hidden"
-      style={{ minHeight: '380px' }}
+      className="w-full h-full min-h-[min(52vh,560px)] rounded-xl overflow-hidden"
     />
   );
 }

@@ -30,36 +30,64 @@ interface OverpassElement {
   bounds?: { minlat: number; minlon: number; maxlat: number; maxlon: number };
 }
 
-async function queryOverpassWithRetry(query: string, maxRetries = 3): Promise<OverpassElement[]> {
+// Accept: application/json can trigger HTTP 406 on some public Overpass instances (content negotiation).
+const OVERPASS_FETCH_HEADERS: Record<string, string> = {
+  'Content-Type': 'application/x-www-form-urlencoded',
+  Accept: '*/*',
+  'User-Agent':
+    'Traffic-GeoAI/1.0 (traffic analysis; contact via https://www.openstreetmap.org/copyright)',
+};
+
+const OVERPASS_ENDPOINTS = [
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.openstreetmap.de/api/interpreter',
+  'https://overpass.osm.jp/api/interpreter',
+  'https://overpass.osm.ch/api/interpreter',
+  'https://overpass.openstreetmap.ie/api/interpreter',
+  'https://overpass-api.de/api/interpreter',
+];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+interface OverpassHttpError extends Error {
+  overpassStatus?: number;
+}
+
+async function queryOverpassWithRetry(
+  query: string,
+  maxRetries = 8,
+  startEndpointIndex = 0,
+): Promise<OverpassElement[]> {
   let lastError: Error | null = null;
-  
+  const n = OVERPASS_ENDPOINTS.length;
+
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      // Use different Overpass endpoints for load balancing
-      const endpoints = [
-        'https://overpass-api.de/api/interpreter',
-        'https://overpass.kumi.systems/api/interpreter',
-      ];
-      const endpoint = endpoints[attempt % endpoints.length];
-      
+      const endpoint = OVERPASS_ENDPOINTS[(startEndpointIndex + attempt) % n];
+
       console.log(`Attempt ${attempt + 1}: Querying ${endpoint}`);
-      
+
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout
-      
+      const timeoutId = setTimeout(() => controller.abort(), 90000); // 90s timeout
+
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
+        headers: OVERPASS_FETCH_HEADERS,
         body: `data=${encodeURIComponent(query)}`,
         signal: controller.signal,
       });
-      
+
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new Error(`Overpass API error: ${response.status}`);
+        const errText = await response.text().catch(() => '');
+        const err: OverpassHttpError = new Error(
+          `Overpass API error: ${response.status}${errText ? ` — ${errText.slice(0, 280)}` : ''}`,
+        );
+        err.overpassStatus = response.status;
+        throw err;
       }
 
       const data = await response.json();
@@ -68,16 +96,19 @@ async function queryOverpassWithRetry(query: string, maxRetries = 3): Promise<Ov
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
       console.log(`Attempt ${attempt + 1} failed: ${lastError.message}`);
-      
+
       if (attempt < maxRetries - 1) {
-        // Exponential backoff: 1s, 2s, 4s
-        const delay = Math.pow(2, attempt) * 1000;
+        let delay = Math.pow(2, attempt) * 1000;
+        const st = (error as OverpassHttpError).overpassStatus;
+        if (st === 406 || st === 429) {
+          delay = Math.max(delay, 5000 + attempt * 2500);
+        }
         console.log(`Waiting ${delay}ms before retry...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        await sleep(delay);
       }
     }
   }
-  
+
   throw lastError || new Error('All retry attempts failed');
 }
 
@@ -112,7 +143,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { lat, lon, radiusMiles = 5 } = await req.json();
+    const { lat, lon, radiusMiles = 0.1 } = await req.json();
 
     if (!lat || !lon) {
       return new Response(
@@ -121,42 +152,51 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Cap radius at 5 miles for performance
-    const effectiveRadius = Math.min(radiusMiles, 5);
+    // Clamp radius (miles) for performance
+    const effectiveRadius = Math.min(1, Math.max(0.1, Number(radiusMiles) || 0.1));
     const radiusMeters = milesToMeters(effectiveRadius);
     const areaKm2 = Math.PI * (effectiveRadius * 1.60934) ** 2;
 
     console.log(`Analyzing traffic around (${lat}, ${lon}) with radius ${effectiveRadius} miles (${Math.round(radiusMeters)}m)`);
 
-    // Optimized query: Use 'out center' instead of 'out geom', shorter timeout
-    // Split into focused queries for better performance
+    const queryAreaStr = `(around:${radiusMeters},${lat},${lon})`;
     const roadsQuery = `
+      [out:json][timeout:60];
+      way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|service|unclassified|living_street)$"]${queryAreaStr};
+      out center tags;
+    `;
+
+    const trafficSignalsQuery = `
+      [out:json][timeout:35];
+      node["highway"="traffic_signals"]${queryAreaStr};
+      out body;
+    `;
+
+    const otherInfraQuery = `
       [out:json][timeout:45];
-      way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|service|unclassified|living_street)$"](around:${radiusMeters},${lat},${lon});
-      out center tags;
-    `;
-
-    const infrastructureQuery = `
-      [out:json][timeout:30];
       (
-        node["highway"="traffic_signals"](around:${radiusMeters},${lat},${lon});
-        node["highway"="bus_stop"](around:${radiusMeters},${lat},${lon});
-        node["railway"="station"](around:${radiusMeters},${lat},${lon});
-        way["amenity"="parking"](around:${radiusMeters},${lat},${lon});
-        way["bridge"="yes"]["highway"](around:${radiusMeters},${lat},${lon});
-        way["tunnel"="yes"]["highway"](around:${radiusMeters},${lat},${lon});
+        node["highway"="bus_stop"]${queryAreaStr};
+        node["railway"="station"]${queryAreaStr};
+        way["amenity"="parking"]${queryAreaStr};
+        way["bridge"="yes"]["highway"]${queryAreaStr};
+        way["tunnel"="yes"]["highway"]${queryAreaStr};
       );
-      out center tags;
+      out body;
     `;
 
-    // Run queries in parallel for speed
-    console.log('Fetching road data...');
-    const [roadElements, infraElements] = await Promise.all([
-      queryOverpassWithRetry(roadsQuery),
-      queryOverpassWithRetry(infrastructureQuery),
-    ]);
+    console.log('Fetching OSM data (roads, traffic signals, other infra)...');
+    const roadElements = await queryOverpassWithRetry(roadsQuery, 8, 0);
+    await sleep(400);
+    const signalElements = await queryOverpassWithRetry(trafficSignalsQuery, 8, 1);
+    await sleep(400);
+    const otherInfraElements = await queryOverpassWithRetry(otherInfraQuery, 8, 3);
 
-    console.log(`Retrieved ${roadElements.length} roads, ${infraElements.length} infrastructure elements`);
+    const infraElements = signalElements.concat(otherInfraElements);
+    const allElements = roadElements.concat(infraElements);
+
+    console.log(
+      `Retrieved ${roadElements.length} road ways, ${signalElements.length} signal nodes, ${otherInfraElements.length} other infra`,
+    );
 
     // Process the data
     const analysis: TrafficAnalysis = {
@@ -262,7 +302,7 @@ Deno.serve(async (req) => {
           radiusMiles: effectiveRadius,
           radiusKm: Math.round(effectiveRadius * 1.60934 * 100) / 100,
           areaKm2: Math.round(areaKm2 * 100) / 100,
-          elementsProcessed: roadElements.length + infraElements.length,
+          elementsProcessed: allElements.length,
           timestamp: new Date().toISOString(),
         },
       }),

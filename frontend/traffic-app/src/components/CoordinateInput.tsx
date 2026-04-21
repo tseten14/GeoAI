@@ -12,6 +12,11 @@ interface CoordinateInputProps {
   initialLat?: number;
   initialLon?: number;
   initialRadius?: number;
+  /** Controlled tab: Area vs Driving route (parent drives map + stale-result clearing). */
+  mode: 'radius' | 'route';
+  onModeChange: (mode: 'radius' | 'route') => void;
+  /** Fires when Driving route is selected and destination fields parse to valid coordinates (for map preview). */
+  onDestinationPreviewChange?: (lat: number, lon: number) => void;
 }
 
 export function CoordinateInput({ 
@@ -19,9 +24,13 @@ export function CoordinateInput({
   isLoading, 
   initialLat = 40.7128, 
   initialLon = -74.006,
-  initialRadius = 1
+  initialRadius = 0.1,
+  mode,
+  onModeChange,
+  onDestinationPreviewChange,
 }: CoordinateInputProps) {
-  const [mode, setMode] = useState<'radius' | 'route'>('radius');
+  const formatRadiusMi = (r: number) =>
+    r % 1 === 0 ? String(r) : r.toFixed(1);
   
   const [lat, setLat] = useState(initialLat.toString());
   const [lon, setLon] = useState(initialLon.toString());
@@ -36,6 +45,19 @@ export function CoordinateInput({
     setLat(initialLat.toString());
     setLon(initialLon.toString());
   }, [initialLat, initialLon]);
+
+  useEffect(() => {
+    setRadius(initialRadius);
+  }, [initialRadius]);
+
+  useEffect(() => {
+    if (mode !== 'route') return;
+    const dLat = parseFloat(destLat);
+    const dLon = parseFloat(destLon);
+    if (Number.isFinite(dLat) && Number.isFinite(dLon)) {
+      onDestinationPreviewChange?.(dLat, dLon);
+    }
+  }, [mode, destLat, destLon, onDestinationPreviewChange]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,7 +124,7 @@ export function CoordinateInput({
       <div className="flex rounded-lg border border-border bg-muted/40 p-1">
         <button
           type="button"
-          onClick={() => setMode('radius')}
+          onClick={() => onModeChange('radius')}
           className={`flex flex-1 items-center justify-center gap-2 rounded-md py-2 text-sm font-semibold transition-colors ${
             mode === 'radius' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
           }`}
@@ -111,7 +133,7 @@ export function CoordinateInput({
         </button>
         <button
           type="button"
-          onClick={() => setMode('route')}
+          onClick={() => onModeChange('route')}
           className={`flex flex-1 items-center justify-center gap-2 rounded-md py-2 text-sm font-semibold transition-colors ${
             mode === 'route' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
           }`}
@@ -167,16 +189,16 @@ export function CoordinateInput({
             >
               <div className="flex items-center justify-between">
                 <Label className="text-sm font-medium">Radius</Label>
-                <span className="text-sm font-mono text-primary font-medium">{radius} mi</span>
+                <span className="text-sm font-mono text-primary font-medium">{formatRadiusMi(radius)} mi</span>
               </div>
               <Slider
                 value={[radius]}
                 onValueChange={(value) => setRadius(value[0])}
-                min={1} max={15} step={1} className="py-2"
+                min={0.1} max={1} step={0.1} className="py-2"
               />
               <div className="flex justify-between text-xs text-muted-foreground font-light">
+                <span>0.1 mi</span>
                 <span>1 mi</span>
-                <span>15 mi</span>
               </div>
             </motion.div>
           )}

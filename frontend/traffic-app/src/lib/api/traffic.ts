@@ -16,7 +16,6 @@ export interface TrafficAnalysis {
   connectivityScore: number;
   congestionScore: number;
   congestionLevel: string;
-  timeMultiplier: number;
 }
 
 export interface AnalysisMetadata {
@@ -27,10 +26,16 @@ export interface AnalysisMetadata {
   elementsProcessed: number;
   timestamp: string;
   routeDurationEstimateStr: string | null;
+  /** True when OSRM path is returned but OSM corridor scan was skipped (e.g. very long routes). */
+  routeAnalysisSkipped?: boolean;
+  routeAnalysisSkipReason?: string | null;
+  /** True when the full road-network Overpass scan was skipped; signals may still be sampled along the corridor. */
+  routeCorridorLimitedScan?: boolean;
+  routeCorridorLimitedScanNote?: string | null;
 }
 
 export interface POIMarker {
-  type: 'signal';
+  type: 'signal' | 'bus_stop' | 'station';
   lat: number;
   lon: number;
   id: number;
@@ -60,41 +65,58 @@ export async function analyzeTraffic(
   lon: number,
   destLat?: number,
   destLon?: number,
-  radiusMiles: number = 5
+  radiusMiles: number = 0.1
 ): Promise<TrafficResponse> {
   try {
     const payload: any = { lat, lon };
-    if (destLat && destLon) {
-      payload.destLat = destLat;
-      payload.destLon = destLon;
+    const hasDest =
+      destLat != null &&
+      destLon != null &&
+      destLat !== '' &&
+      destLon !== '' &&
+      Number.isFinite(Number(destLat)) &&
+      Number.isFinite(Number(destLon));
+    if (hasDest) {
+      payload.destLat = Number(destLat);
+      payload.destLon = Number(destLon);
     } else {
       payload.radiusMiles = radiusMiles;
     }
 
-    const response = await fetch('/api/traffic-analysis', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000);
+    try {
+      const response = await fetch('/api/traffic-analysis', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
 
-    const data = await response.json();
+      const data = await response.json();
 
-    if (!response.ok) {
-      return { success: false, error: data.error || `Server error: ${response.status}` };
+      if (!response.ok) {
+        return { success: false, error: data.error || `Server error: ${response.status}` };
+      }
+
+      if (data.success === false && data.error) {
+        return { success: false, error: data.error };
+      }
+
+      return data;
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    if (data.success === false && data.error) {
-      return { success: false, error: data.error };
-    }
-
-    return data;
   } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Network error communicating with the server'
-    };
+    const msg =
+      error instanceof Error && error.name === 'AbortError'
+        ? 'Request timed out. Try a shorter route or Area Radius mode.'
+        : error instanceof Error
+          ? error.message
+          : 'Network error communicating with the server';
+    return { success: false, error: msg };
   }
 }
 

@@ -1,0 +1,276 @@
+================================================================================
+  TRAFFIC-GEOAI — PROJECT DOCUMENTATION
+================================================================================
+  This file describes the Traffic-GeoAI repository: what it does, how it is
+  structured, and how the main features are implemented. Last updated to match
+  the codebase layout (Express + MongoDB contact app; React traffic UI).
+
+--------------------------------------------------------------------------------
+1. OVERVIEW
+--------------------------------------------------------------------------------
+
+  Traffic-GeoAI is a combined web application that runs on a single Node.js
+  Express server:
+
+    (A) Geocoded Contact List — A classic server-rendered “contacts / mailer”
+        application with login, MongoDB persistence, address geocoding, and a
+        Leaflet map of contacts.
+
+    (B) GeoTraffic ETL Pipeline (Traffic Insights) — A single-page React app
+        served at /traffic/ that lets users pick a map location (or a driving
+        route), pulls OpenStreetMap infrastructure data through the Overpass
+        API, computes heuristic congestion-style metrics, and visualizes results
+        on a Leaflet map (heatmap / POI points) with a dashboard.
+
+  Important clarification: The “traffic” feature does NOT use live traffic
+  APIs or real-time congestion feeds. It uses static OSM map data (roads,
+  signals, stops, etc.) only. The congestion-style score is not adjusted by
+  time of day or the server clock. The “ETL” naming reflects extract → transform → present
+  in the UI, not a separate batch data warehouse.
+
+
+--------------------------------------------------------------------------------
+2. TECHNOLOGY STACK
+--------------------------------------------------------------------------------
+
+  Backend (root package, package.json name: finalproject)
+  - Node.js, Express ~4.x
+  - Pug templates (views/)
+  - express-session, passport + passport-local (single hard-coded demo user)
+  - MongoDB 3.x driver — database cmps369, collection colon1 (contacts)
+  - bcryptjs for password hashing
+  - Axios — HTTP client for Overpass API calls (traffic-api route)
+  - @mapbox/polyline — decode OSRM route geometries for the traffic feature
+
+  Frontend — Contact / mailer UI
+  - Static assets under public/ (CSS, images, javascripts/functions.js)
+  - Leaflet on the contacts page for plotting geocoded addresses
+
+  Frontend — Traffic Insights (traffic-app/)
+  - Vite 5, React 18, TypeScript
+  - react-router-dom, TanStack Query (available), Tailwind + Radix/shadcn-style UI
+  - Leaflet + react-leaflet, leaflet.heat for heatmaps
+  - Optional Supabase client in repo (integrations/supabase) — the primary
+    analysis path when using the bundled Express app is POST /api/traffic-analysis
+    (same origin), not Supabase, unless you wire production differently.
+
+
+--------------------------------------------------------------------------------
+3. HOW TO RUN
+--------------------------------------------------------------------------------
+
+  Prerequisites
+  - Node.js and npm
+  - MongoDB listening on localhost:27017 (required for contact features)
+
+  Install and start the main server
+    npm install
+    npm start
+
+  Default URL: http://127.0.0.1:3000 (see index.js / normalizePort for PORT).
+
+  Demo login (defined in index.js; change for production)
+    Username: sherpa_14
+    Password: geocode
+
+  Traffic Insights UI
+  - Production-style: build the React app so Express can serve traffic-app/dist
+      npm run build:traffic
+    Then open http://127.0.0.1:3000/traffic/
+  - Development: Vite dev server (hot reload), typically port 8080
+      npm run dev:traffic
+    Vite base path is /traffic/ (vite.config.ts); dev often uses
+    http://127.0.0.1:8080/traffic/
+
+  Environment variables (traffic / Overpass)
+  - OVERPASS_URL — Optional. If set to a full interpreter URL or base URL,
+    the traffic API uses that Overpass instance instead of the built-in public
+    mirror list. Useful for reliability or private Overpass servers.
+
+
+--------------------------------------------------------------------------------
+4. SERVER ARCHITECTURE (index.js)
+--------------------------------------------------------------------------------
+
+  - Express app loads Pug views from views/, static files from public/.
+  - Session middleware and Passport local strategy secure /contacts and related
+    routes (see routes/index.js ensureLoggedIn).
+  - Main HTML routes are mounted at / via routes/index.js.
+  - Traffic REST API: app.use('/api', trafficApiRoute) → routes/traffic-api.js
+    exposes POST /api/traffic-analysis.
+  - Traffic SPA: express.static on traffic-app/dist at /traffic, plus a catch-all
+    GET /traffic/* that returns index.html for client-side routing.
+
+  HTTP server bootstrap (listen) is in the lower portion of index.js (typical
+  Express generated structure).
+
+
+--------------------------------------------------------------------------------
+5. FEATURE A — GEOCODED CONTACT LIST
+--------------------------------------------------------------------------------
+
+  Purpose
+  - Authenticated users manage contacts (name, address, phone, email, preferences).
+  - Addresses are geocoded so contacts can be shown on a map.
+
+  Routes (routes/index.js)
+  - GET  /              — Mailer (logged in) or redirect via ensureLoggedIn
+  - GET  /mailer        — Mailer form for adding contacts
+  - POST /mailer        — Insert new contact (geocode + insert)
+  - GET  /contacts      — List all contacts; backfills missing lat/lng via
+                          geocodeAddress when Street + City exist
+  - POST /delete        — Delete by MongoDB _id
+  - POST /getupdateform — Load one contact for edit form
+  - POST /update        — Update contact (with geocoding path in geocodeandinsert)
+
+  Login (wired in index.js on the routes object)
+  - GET  /login, /login_fail
+  - POST /login       — passport.authenticate local → /contacts on success
+  - GET  /logout
+
+  Geocoding
+  - geocodeAddress (Street, City, State): tries Mapbox Geocoding API first
+    (token embedded in routes/index.js — replace for production), then falls back
+    to Nominatim (OpenStreetMap) with a descriptive User-Agent.
+  - Inserts/updates store Latitude and Longitude in MongoDB when geocoding succeeds.
+
+  Client-side helpers
+  - public/javascripts/functions.js — Leaflet map for contacts, table search,
+    pagination (5 rows per page), etc.
+
+  Data
+  - MongoDB: mongodb://localhost:27017/cmps369
+  - Collection: colon1
+
+
+--------------------------------------------------------------------------------
+6. FEATURE B — GEOTRAFFIC / TRAFFIC INSIGHTS (REACT + API)
+--------------------------------------------------------------------------------
+
+  User-visible features
+  - Header with navigation back to Contacts and links (e.g. OpenStreetMap).
+  - Mode tabs:
+      • Area Radius — Center (lat/lon), radius in miles (0.1–1 mi; default 0.1),
+        optional URL query params ?lat=&lng=&radius=
+      • Driving Route — Origin/destination; server uses OSRM to get route
+        geometry and analyzes a corridor around the route.
+  - “Current location” / quick city presets (e.g. NYC, LA) where implemented.
+  - “Analyze Traffic” triggers the pipeline UI (Extract → Transform → Load) and
+    calls the backend.
+  - Map: circle for radius mode, polylines for route mode; heatmap or discrete
+    POI markers for signals, bus stops, rail stations (subject to data returned).
+  - Dashboard: summary counts, congestion score 0–100, qualitative level
+    (Minimal / Light / … / Severe).
+
+  Frontend implementation (traffic-app/src)
+  - pages/Index.tsx — State, URL search params, orchestrates analyzeTraffic,
+    pipeline animation, passes props to MapView, AnalysisDashboard, etc.
+  - lib/api/traffic.ts — POST /api/traffic-analysis with JSON body:
+      { lat, lon, radiusMiles }  OR  { lat, lon, destLat, destLon }
+  - components/MapView.tsx — Leaflet map, layers, heatmap vs points.
+  - components/CoordinateInput.tsx — Radius slider, coordinates, mode switching.
+  - components/AnalysisDashboard.tsx — Metrics cards.
+  - components/PipelineStatus.tsx — ETL step visualization (UX; timing partly
+    simulated in Index.tsx before/after the fetch).
+
+  Vite base: /traffic/ — assets resolve correctly when served under Express at
+  /traffic/.
+
+
+--------------------------------------------------------------------------------
+7. TRAFFIC BACKEND — HOW ANALYSIS WORKS (routes/traffic-api.js)
+--------------------------------------------------------------------------------
+
+  Endpoint
+    POST /api/traffic-analysis
+    Content-Type: application/json
+    Body:
+      - lat, lon (required) — origin / center; parsed as floats, range-checked.
+      - radiusMiles — optional; clamped to 0.1–1 mi (default 0.1) for radius mode.
+      - destLat, destLon — if both present, enables route mode.
+
+  External services
+  1) OSRM (public demo router)
+     - Route mode: GET https://router.project-osrm.org/route/v1/driving/...
+     - Returns encoded polylines; server decodes to lat/lon for the map and uses
+       route distance/duration for metadata. Overpass queries use a simplified
+       polyline with a fixed buffer (e.g. ~250 m) around sampled route points.
+
+  2) Overpass API (OpenStreetMap data)
+     - Queries use Overpass QL: roads as ways with highway=* in a class set;
+       traffic signals as nodes with highway=traffic_signals or
+       crossing=traffic_signals; other infra includes bus_stop, railway=station,
+       parking, bridge/tunnel on highways, etc.
+     - Queries are split (roads, signals, other infra) to reduce timeouts and
+       HTTP 406/429 issues on public instances.
+     - Multiple public mirrors are configured; the first reliable mirror is
+       preferred. Optional OVERPASS_URL override.
+     - Retry logic: exponential backoff; longer waits on 406, 429, 503, 504;
+       if a mirror returns HTTP 200 with zero elements, the client may retry
+       another mirror (flaky mirrors exist).
+     - Radius mode may use an `around:` filter; if signal query returns nothing,
+       a bounding-box fallback query can be used for the same tags.
+
+  Processing (summary)
+  - Roads: count types, estimate or sum segment lengths (geometry or heuristic),
+    one-way roads, maxspeed tags, node-sharing for intersection-like counts.
+  - Infrastructure: tally signals, bus stops, stations, parking, bridges/tunnels;
+    build poiMarkers with lat/lon for map display (capped, e.g. ~2500 points).
+  - Area: disk area from radius for density; route mode uses a rough corridor proxy.
+
+  Scoring (heuristic, not ground-truth traffic)
+  - Components include signal density, intersections, weighted “heavy” road
+    presence, one-way ratio; combined into a raw score (no time-of-day or clock-based multiplier).
+  - Final congestionScore is capped at 100; congestionLevel is a label from
+    score thresholds.
+
+  Response shape (simplified)
+  - success, data (analysis object), metadata (center, radius, route info,
+    elementsProcessed, timestamp, …), visualData (routes, poiMarkers).
+
+
+--------------------------------------------------------------------------------
+8. OPTIONAL SUPABASE PIECE
+--------------------------------------------------------------------------------
+
+  The repository includes traffic-app/supabase/ (e.g. Edge Function
+  osm-traffic-analysis) and Supabase client scaffolding. README describes
+  deploying that function and setting VITE_SUPABASE_* for a Supabase-centric
+  deployment.
+
+  When you run the monolithic Express app locally with analyzeTraffic pointing
+  to /api/traffic-analysis, the Express route is the integration path you use
+  out of the box. Align any Edge Function logic with routes/traffic-api.js if
+  you maintain both.
+
+
+--------------------------------------------------------------------------------
+9. DIRECTORY MAP (HIGH LEVEL)
+--------------------------------------------------------------------------------
+
+  /
+  - index.js                 Express app + HTTP server
+  - package.json             Root scripts and dependencies
+  - routes/
+      index.js               Contacts, mailer, geocoding, MongoDB
+      traffic-api.js         Traffic analysis API
+  - views/                   Pug templates (login, contacts, mailer, update, …)
+  - public/                  Static assets for classic UI (e.g. javascripts/)
+  - traffic-app/             Vite + React Traffic Insights
+      src/                   Application source
+      dist/                  Production build output (served at /traffic/)
+      supabase/              Edge function / Supabase config (optional)
+
+--------------------------------------------------------------------------------
+10. OPERATIONAL NOTES
+--------------------------------------------------------------------------------
+
+  - Public Overpass endpoints are rate-limited and occasionally return errors;
+    retries and mirror rotation are implemented to improve success rates.
+  - Rebuild traffic-app after UI changes: npm run build:traffic (or dev server).
+  - For production, replace embedded Mapbox token, session secret, and demo
+    credentials; use HTTPS and secure session cookies.
+
+================================================================================
+  END OF DOCUMENTATION
+================================================================================

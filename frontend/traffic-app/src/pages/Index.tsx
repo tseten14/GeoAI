@@ -23,7 +23,15 @@ export default function Index() {
 
   const initialLat = urlLat ? parseFloat(urlLat) : 40.7128;
   const initialLng = urlLng ? parseFloat(urlLng) : -74.006;
-  const initialRadius = urlRadius ? parseInt(urlRadius, 10) : 1;
+  const initialRadius = (() => {
+    if (!urlRadius) return 0.1;
+    const trimmed = urlRadius.trim();
+    // Old links used radius=1 as the default; new default is 0.1 mi (use 1.01 in URL if you need exactly 1 mi)
+    if (trimmed === '1' || trimmed === '1.0') return 0.1;
+    const r = parseFloat(urlRadius);
+    if (Number.isNaN(r)) return 0.1;
+    return Math.min(1, Math.max(0.1, r));
+  })();
 
   const [isLoading, setIsLoading] = useState(false);
   const [pipelineStage, setPipelineStage] = useState<PipelineStage>('idle');
@@ -36,27 +44,47 @@ export default function Index() {
   const [routes, setRoutes] = useState<RouteData[] | null>(null);
   const [poiMarkers, setPoiMarkers] = useState<POIMarker[]>([]);
   const [poiDisplayMode, setPoiDisplayMode] = useState<'heatmap' | 'points'>('heatmap');
+  /** Set while a driving-route request is in flight so the map shows route markers instead of the radius circle before metadata exists */
+  const [pendingRouteDest, setPendingRouteDest] = useState<[number, number] | null>(null);
+  /** Form tab: keeps map in route UI even before a route response (avoids showing a stale radius analysis). */
+  const [formMode, setFormMode] = useState<'radius' | 'route'>('radius');
+  /** Parsed destination while Driving route tab is selected (map preview before analyze). */
+  const [routeDestPreview, setRouteDestPreview] = useState<[number, number] | null>(null);
 
   // We use a ref so we only auto-analyze once on mount
   const hasAutoAnalyzed = useRef(false);
+  /** Prevents overlapping analyses (e.g. URL auto-analyze + manual route) from clearing each other's loading / route UI. */
+  const analysisRequestIdRef = useRef(0);
 
   const handleAnalyze = useCallback(async (lat: number, lon: number, destLat?: number, destLon?: number, radiusMiles?: number) => {
+    const requestId = ++analysisRequestIdRef.current;
+
     setIsLoading(true);
     setAnalysis(null);
     setMetadata(null);
     setRoutes(null);
     setPoiMarkers([]);
     setCenter([lat, lon]);
-    if (radiusMiles) setRadius(radiusMiles);
+    if (radiusMiles != null && Number.isFinite(radiusMiles)) setRadius(radiusMiles);
+
+    const dLat = destLat != null ? Number(destLat) : NaN;
+    const dLon = destLon != null ? Number(destLon) : NaN;
+    const isRouteRequest = Number.isFinite(dLat) && Number.isFinite(dLon);
+    setPendingRouteDest(isRouteRequest ? [dLat, dLon] : null);
+    if (isRouteRequest) setRouteDestPreview(null);
 
     // Simulate ETL stages
     setPipelineStage('extract');
     await new Promise(resolve => setTimeout(resolve, 600));
 
+    if (requestId !== analysisRequestIdRef.current) return;
+
     setPipelineStage('transform');
 
     try {
       const response = await analyzeTraffic(lat, lon, destLat, destLon, radiusMiles);
+
+      if (requestId !== analysisRequestIdRef.current) return;
 
       if (!response) {
         throw new Error('No response from server');
@@ -64,6 +92,8 @@ export default function Index() {
       if (response.success && response.data && response.metadata) {
         setPipelineStage('load');
         await new Promise(resolve => setTimeout(resolve, 400));
+
+        if (requestId !== analysisRequestIdRef.current) return;
 
         setAnalysis(response.data);
         setMetadata(response.metadata);
@@ -75,14 +105,24 @@ export default function Index() {
         
         setPipelineStage('complete');
 
-        toast({
-          title: 'Analysis Complete',
-          description: `${response.metadata.elementsProcessed.toLocaleString()} elements processed`,
-        });
+        if (response.metadata.routeAnalysisSkipped) {
+          toast({
+            title: 'Driving route shown',
+            description:
+              response.metadata.routeAnalysisSkipReason ||
+              'OSM infrastructure scan was skipped for this long route. The map shows the driving path only.',
+          });
+        } else {
+          toast({
+            title: 'Analysis Complete',
+            description: `${response.metadata.elementsProcessed.toLocaleString()} elements processed`,
+          });
+        }
       } else {
         throw new Error(response.error || 'Failed to analyze traffic data');
       }
     } catch (error) {
+      if (requestId !== analysisRequestIdRef.current) return;
       console.error('Analysis error:', error);
       setPipelineStage('idle');
       toast({
@@ -91,9 +131,23 @@ export default function Index() {
         variant: 'destructive',
       });
     } finally {
+      if (requestId !== analysisRequestIdRef.current) return;
       setIsLoading(false);
+      setPendingRouteDest(null);
     }
   }, [toast]);
+
+  const handleFormModeChange = useCallback((next: 'radius' | 'route') => {
+    setFormMode(next);
+    setAnalysis(null);
+    setMetadata(null);
+    setRoutes(null);
+    setPoiMarkers([]);
+    setPipelineStage('idle');
+    if (next === 'radius') {
+      setRouteDestPreview(null);
+    }
+  }, []);
 
   // Effect to perform initial analysis if coordinates are provided in URL
   useEffect(() => {
@@ -104,9 +158,23 @@ export default function Index() {
   }, [urlLat, urlLng, initialLat, initialLng, initialRadius, handleAnalyze]);
 
   const handleMapClick = useCallback((lat: number, lon: number) => {
-    // In a more complex app, this might update the origin or destination depending on mode
+    if (isLoading) return;
     setCenter([lat, lon]);
-  }, []);
+    // Invalidate prior results so the radius circle cannot drift away from where POIs were computed.
+    setAnalysis(null);
+    setMetadata(null);
+    setPoiMarkers([]);
+    setRoutes(null);
+    setPipelineStage('idle');
+  }, [isLoading]);
+
+  const routeDest =
+    metadata?.destination != null
+      ? ([metadata.destination.lat, metadata.destination.lon] as [number, number])
+      : pendingRouteDest ?? routeDestPreview;
+  const mapRouteMode = Boolean(
+    metadata?.isRouteMode || pendingRouteDest != null || formMode === 'route'
+  );
 
   return (
     <div className="min-h-screen bg-transparent">
@@ -119,7 +187,7 @@ export default function Index() {
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ type: "spring", stiffness: 300, damping: 20 }}
-            className="lg:col-span-4 space-y-5"
+            className="lg:col-span-3 space-y-5"
           >
             <CoordinateInput
               onSubmit={handleAnalyze}
@@ -127,6 +195,9 @@ export default function Index() {
               initialLat={center[0]}
               initialLon={center[1]}
               initialRadius={radius}
+              mode={formMode}
+              onModeChange={handleFormModeChange}
+              onDestinationPreviewChange={(dlat, dlon) => setRouteDestPreview([dlat, dlon])}
             />
 
             <AnimatePresence>
@@ -137,7 +208,7 @@ export default function Index() {
           </motion.div>
 
           {/* Main Content - Map & Results */}
-          <div className="lg:col-span-8 space-y-5">
+          <div className="lg:col-span-9 space-y-5">
             {/* Map Section */}
             <motion.div
               initial={{ opacity: 0, y: 30 }}
@@ -148,7 +219,7 @@ export default function Index() {
               <div className="flex items-center justify-between border-b border-border px-4 py-3">
                 <div className="flex items-center gap-3">
                   <div className="rounded-lg bg-primary/15 p-2">
-                    {metadata?.isRouteMode ? (
+                    {mapRouteMode ? (
                       <Route className="h-4 w-4 text-primary" />
                     ) : (
                       <MapIcon className="h-4 w-4 text-primary" />
@@ -156,13 +227,12 @@ export default function Index() {
                   </div>
                   <div>
                     <h3 className="text-sm font-semibold text-foreground">
-                      {metadata?.isRouteMode ? 'Route corridor' : 'Analysis area'}
+                      {mapRouteMode ? 'Route corridor' : 'Analysis area'}
                     </h3>
                     <p className="text-xs text-muted-foreground">
-                      {metadata?.isRouteMode 
-                        ? 'Driving path and nearby infrastructure' 
-                        : 'Click to select location'
-                      }
+                      {mapRouteMode
+                        ? 'Driving path and nearby infrastructure'
+                        : 'Click to select location'}
                     </p>
                   </div>
                 </div>
@@ -195,15 +265,15 @@ export default function Index() {
                   </div>
                 )}
               </div>
-              <div className="h-[380px]">
+              <div className="h-[min(76vh,920px)] min-h-[min(52vh,560px)] w-full">
                 <MapView
                   center={center}
                   radiusMiles={radius}
                   onMapClick={handleMapClick}
                   routes={routes}
                   poiMarkers={poiMarkers}
-                  isRouteMode={metadata?.isRouteMode || false}
-                  destination={metadata?.destination ? [metadata.destination.lat, metadata.destination.lon] : undefined}
+                  isRouteMode={mapRouteMode}
+                  destination={routeDest}
                   poiDisplayMode={poiDisplayMode}
                 />
               </div>

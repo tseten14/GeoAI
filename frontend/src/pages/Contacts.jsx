@@ -162,7 +162,7 @@ export default function Contacts() {
     <>
       <div className="toolbar">
         <Link to="/contacts/new" className="btn btn-primary">
-          Add contact
+          Add Customer
         </Link>
         <a href="/traffic/" className="btn btn-ghost">
           Traffic insights

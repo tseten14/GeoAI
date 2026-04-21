@@ -11,7 +11,12 @@ export default defineConfig(() => ({
     strictPort: true,
     hmr: { overlay: false },
     proxy: {
-      "/api": { target: "http://127.0.0.1:3000", changeOrigin: true },
+      "/api": {
+        target: "http://127.0.0.1:3000",
+        changeOrigin: true,
+        timeout: 900000,
+        proxyTimeout: 900000,
+      },
     },
   },
   plugins: [react()],

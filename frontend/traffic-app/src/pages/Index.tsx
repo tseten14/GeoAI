@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from '@/components/ui/use-toast';
 import { Header } from '@/components/Header';
@@ -51,9 +51,7 @@ export default function Index() {
   /** Parsed destination while Driving route tab is selected (map preview before analyze). */
   const [routeDestPreview, setRouteDestPreview] = useState<[number, number] | null>(null);
 
-  // We use a ref so we only auto-analyze once on mount
-  const hasAutoAnalyzed = useRef(false);
-  /** Prevents overlapping analyses (e.g. URL auto-analyze + manual route) from clearing each other's loading / route UI. */
+  /** Prevents overlapping analyses from clearing each other's loading / route UI. */
   const analysisRequestIdRef = useRef(0);
 
   const handleAnalyze = useCallback(async (lat: number, lon: number, destLat?: number, destLon?: number, radiusMiles?: number) => {
@@ -105,7 +103,21 @@ export default function Index() {
         
         setPipelineStage('complete');
 
-        if (response.metadata.routeAnalysisSkipped) {
+        if (response.metadata.routeSignalScanDegraded) {
+          toast({
+            title: 'Route and signals (partial)',
+            description:
+              response.metadata.routeSignalScanNote ||
+              'Some OSM requests failed; the line shows your route. Orange dots are traffic signals where data was retrieved.',
+          });
+        } else if (response.metadata.routeUnionFallbackApplied) {
+          toast({
+            title: 'Route analyzed (reduced OSM detail)',
+            description:
+              response.metadata.routeUnionFallbackNote ||
+              'Signals were loaded in smaller chunks along the route; some road and POI detail may be missing.',
+          });
+        } else if (response.metadata.routeAnalysisSkipped) {
           toast({
             title: 'Driving route shown',
             description:
@@ -146,16 +158,10 @@ export default function Index() {
     setPipelineStage('idle');
     if (next === 'radius') {
       setRouteDestPreview(null);
+    } else {
+      setPoiDisplayMode('points');
     }
   }, []);
-
-  // Effect to perform initial analysis if coordinates are provided in URL
-  useEffect(() => {
-    if (urlLat && urlLng && !hasAutoAnalyzed.current) {
-      hasAutoAnalyzed.current = true;
-      handleAnalyze(initialLat, initialLng, undefined, undefined, initialRadius);
-    }
-  }, [urlLat, urlLng, initialLat, initialLng, initialRadius, handleAnalyze]);
 
   const handleMapClick = useCallback((lat: number, lon: number) => {
     if (isLoading) return;

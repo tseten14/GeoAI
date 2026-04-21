@@ -5,6 +5,33 @@ import 'leaflet.heat'; // Import the heatmap plugin
 import { POIMarker, RouteData } from '@/lib/api/traffic';
 import { filterPoisWithinRadiusMiles } from '@/lib/geo';
 
+/** Leaflet expects [lat, lng]. Decode is normally lat-first; swap if any vertex has invalid latitude magnitude. */
+function normalizeRouteLatLngs(coords: [number, number][] | undefined): L.LatLngExpression[] {
+  if (!coords?.length) return [];
+  const swap = coords.some(
+    (pair) =>
+      pair &&
+      pair.length >= 2 &&
+      Number.isFinite(pair[0]) &&
+      Number.isFinite(pair[1]) &&
+      Math.abs(pair[0]) > 90
+  );
+  const out: L.LatLngTuple[] = [];
+  for (const pair of coords) {
+    if (!pair || pair.length < 2) continue;
+    let a = pair[0];
+    let b = pair[1];
+    if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+    if (swap) {
+      const t = a;
+      a = b;
+      b = t;
+    }
+    out.push([a, b]);
+  }
+  return out;
+}
+
 interface MapViewProps {
   center: [number, number];
   radiusMiles: number;
@@ -16,22 +43,21 @@ interface MapViewProps {
   poiDisplayMode?: 'heatmap' | 'points';
 }
 
-export function MapView({ 
-  center, 
-  radiusMiles, 
-  onMapClick, 
-  routes, 
-  poiMarkers, 
-  isRouteMode, 
+export function MapView({
+  center,
+  radiusMiles,
+  onMapClick,
+  routes,
+  poiMarkers,
+  isRouteMode,
   destination,
-  poiDisplayMode = 'heatmap'
+  poiDisplayMode = 'heatmap',
 }: MapViewProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const layersRef = useRef<L.LayerGroup | null>(null);
   const heatLayerRef = useRef<L.HeatLayer | null>(null);
 
-  // Area mode: only show POIs inside the same disk as the dashed circle (defense in depth vs stale center/API drift).
   const poisForMap = useMemo(() => {
     if (!poiMarkers?.length) return poiMarkers ?? [];
     if (isRouteMode) return poiMarkers;
@@ -41,24 +67,21 @@ export function MapView({
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
 
-    // Initialize map
     const map = L.map(mapRef.current, {
       center: center,
       zoom: 11,
       zoomControl: true,
     });
 
-    // Light, clean tile layer
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
       subdomains: 'abcd',
       maxZoom: 20,
     }).addTo(map);
 
-    // Layer group for easy clearing of previous visuals
     layersRef.current = L.layerGroup().addTo(map);
 
-    // Handle map clicks
     map.on('click', (e: L.LeafletMouseEvent) => {
       if (onMapClick) {
         onMapClick(e.latlng.lat, e.latlng.lng);
@@ -73,21 +96,20 @@ export function MapView({
     };
   }, []);
 
-  // Update map contents when data changes
   useEffect(() => {
     if (!mapInstanceRef.current || !layersRef.current) return;
 
     const map = mapInstanceRef.current;
     const layerGroup = layersRef.current;
-    
-    // Clear existing layers
+
     layerGroup.clearLayers();
     if (heatLayerRef.current) {
-        map.removeLayer(heatLayerRef.current);
-        heatLayerRef.current = null;
+      map.removeLayer(heatLayerRef.current);
+      heatLayerRef.current = null;
     }
 
-    // 1. Draw Origin Center (Apple Maps Style)
+    const routePolylines: L.Polyline[] = [];
+
     const originIcon = L.divIcon({
       className: 'custom-marker',
       html: `
@@ -103,7 +125,6 @@ export function MapView({
     });
     L.marker(center, { icon: originIcon }).addTo(layerGroup);
 
-    // 2. Driving route: never fall back to the radius circle when isRouteMode is true (missing dest alone used to draw the wrong layer).
     if (isRouteMode) {
       const destIcon = L.divIcon({
         className: 'custom-marker',
@@ -124,21 +145,25 @@ export function MapView({
 
       if (routes && routes.length > 0) {
         for (let i = routes.length - 1; i >= 0; i--) {
-            const isPrimary = i === 0;
-            const route = routes[i];
-            
-            const polyline = L.polyline(route.coordinates, {
-              color: isPrimary ? '#007AFF' : '#6B7280', // Apple Blue vs Gray
-              weight: isPrimary ? 5 : 4,
-              opacity: isPrimary ? 0.8 : 0.6,
-              lineJoin: 'round',
-              lineCap: 'round',
-              dashArray: isPrimary ? undefined : '10, 10'
-            }).addTo(layerGroup);
-            
-            if (isPrimary) {
-               map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
-            }
+          const isPrimary = i === 0;
+          const route = routes[i];
+          const latLngs = normalizeRouteLatLngs(route.coordinates);
+          if (latLngs.length < 2) continue;
+
+          const polyline = L.polyline(latLngs, {
+            color: isPrimary ? '#007AFF' : '#6B7280',
+            weight: isPrimary ? 6 : 4,
+            opacity: isPrimary ? 0.95 : 0.65,
+            lineJoin: 'round',
+            lineCap: 'round',
+            dashArray: isPrimary ? undefined : '10, 10',
+            interactive: false,
+          }).addTo(layerGroup);
+          routePolylines.push(polyline);
+
+          if (isPrimary) {
+            map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
+          }
         }
       } else if (destination) {
         const b = L.latLngBounds([center, destination]);
@@ -147,7 +172,6 @@ export function MapView({
         map.setView(center, 11);
       }
     } else {
-      // 3. Draw Radius Circle (Area Mode)
       const radiusMeters = radiusMiles * 1609.34;
       const circle = L.circle(center, {
         radius: radiusMeters,
@@ -157,11 +181,10 @@ export function MapView({
         weight: 1.5,
         dashArray: '6, 6',
       }).addTo(layerGroup);
-      
+
       map.fitBounds(circle.getBounds(), { padding: [20, 20] });
     }
 
-    // 4. Transit / signals heatmap or points (signals, bus stops, rail — same layer for density)
     if (poisForMap && poisForMap.length > 0) {
       const labelFor = (t: POIMarker['type']) =>
         t === 'signal' ? 'Traffic signal' : t === 'bus_stop' ? 'Bus stop' : 'Rail station';
@@ -171,9 +194,9 @@ export function MapView({
 
         // @ts-expect-error leaflet.heat extends L
         heatLayerRef.current = L.heatLayer(heatData, {
-          radius: 28,
-          blur: 22,
-          minOpacity: 0.35,
+          radius: 22,
+          blur: 28,
+          minOpacity: 0.22,
           maxZoom: 18,
           max: 1.2,
           gradient: {
@@ -203,11 +226,14 @@ export function MapView({
       }
     }
 
+    for (const pl of routePolylines) {
+      pl.bringToFront();
+    }
   }, [center, radiusMiles, routes, poisForMap, isRouteMode, destination, poiDisplayMode]);
 
   return (
-    <div 
-      ref={mapRef} 
+    <div
+      ref={mapRef}
       className="w-full h-full min-h-[min(52vh,560px)] rounded-xl overflow-hidden"
     />
   );

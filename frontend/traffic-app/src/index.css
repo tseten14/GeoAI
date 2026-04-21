@@ -233,13 +233,18 @@
   border-radius: var(--radius);
 }
 
+/* Do not use filter on .leaflet-tile-pane — it often shows a grid at tile edges in Chrome/Safari. */
 .leaflet-container img.leaflet-tile {
   max-width: none !important;
   max-height: none !important;
+  border: none !important;
+  outline: none !important;
+  vertical-align: top;
 }
 
 .leaflet-tile-pane {
-  filter: saturate(0.92) brightness(1.05);
+  /* Promote tiles to their own layer to reduce 1px seam glitches when panning/zooming */
+  transform: translateZ(0);
 }
 
 .leaflet-control-zoom a {

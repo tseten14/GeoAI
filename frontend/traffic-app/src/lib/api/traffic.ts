@@ -32,6 +32,12 @@ export interface AnalysisMetadata {
   /** True when the full road-network Overpass scan was skipped; signals may still be sampled along the corridor. */
   routeCorridorLimitedScan?: boolean;
   routeCorridorLimitedScanNote?: string | null;
+  /** Some long-route Overpass segments failed; route geometry should still be present. */
+  routeSignalScanDegraded?: boolean;
+  routeSignalScanNote?: string | null;
+  /** Full route-corridor Overpass union failed; smaller signal-only requests succeeded. */
+  routeUnionFallbackApplied?: boolean;
+  routeUnionFallbackNote?: string | null;
 }
 
 export interface POIMarker {
@@ -83,8 +89,10 @@ export async function analyzeTraffic(
       payload.radiusMiles = radiusMiles;
     }
 
+    // Long driving routes hit many Overpass mirrors; 2min is too short (browser + Vite proxy were cutting off first).
+    const clientTimeoutMs = 600000; // 10 minutes
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120000);
+    const timeoutId = setTimeout(() => controller.abort(), clientTimeoutMs);
     try {
       const response = await fetch('/api/traffic-analysis', {
         method: 'POST',
@@ -112,7 +120,7 @@ export async function analyzeTraffic(
   } catch (error) {
     const msg =
       error instanceof Error && error.name === 'AbortError'
-        ? 'Request timed out. Try a shorter route or Area Radius mode.'
+        ? 'Request timed out after several minutes. Try again, use Area radius for a small region, or set OVERPASS_URL to a dedicated Overpass instance.'
         : error instanceof Error
           ? error.message
           : 'Network error communicating with the server';

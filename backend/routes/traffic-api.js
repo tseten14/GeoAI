@@ -93,11 +93,10 @@ const OVERPASS_AXIOS_HEADERS = {
 // Do not use overpass.osm.jp — TLS cert does not match hostname. Override with OVERPASS_URL for a private instance.
 const DEFAULT_OVERPASS_ENDPOINTS = [
     'https://overpass-api.de/api/interpreter',
+    'https://lz4.overpass-api.de/api/interpreter',
     'https://overpass.kumi.systems/api/interpreter',
     'https://overpass.openstreetmap.fr/api/interpreter',
     'https://overpass.osm.ch/api/interpreter',
-    'https://overpass.openstreetmap.ie/api/interpreter',
-    'https://overpass.openstreetmap.de/api/interpreter',
 ];
 
 function getOverpassEndpoints() {
@@ -114,6 +113,13 @@ function getOverpassEndpoints() {
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Client HTTP timeout per Overpass attempt — long waits block corridor scans; mirrors are rotated instead. */
+function getOverpassHttpTimeoutMs() {
+    const t = parseInt(process.env.OVERPASS_HTTP_TIMEOUT_MS || '', 10);
+    if (Number.isFinite(t) && t >= 12000 && t <= 120000) return t;
+    return 26000;
 }
 
 /** Overpass often returns { elements: [], remark: "runtime error: ..." } with HTTP 200. */
@@ -202,8 +208,8 @@ function dedupeOverpassElements(elements) {
 }
 
 /** Build three Overpass queries for route mode (union of short `around` corridors). */
-function buildRouteModeQueries(sampledCoords, bufferMeters) {
-    const segments = chunkCoordsForRouteOverpass(sampledCoords, 4);
+function buildRouteModeQueries(sampledCoords, bufferMeters, maxPointsPerChunk = 6) {
+    const segments = chunkCoordsForRouteOverpass(sampledCoords, maxPointsPerChunk);
     const buf = bufferMeters;
 
     const roadParts = segments.map((seg) => {
@@ -292,6 +298,7 @@ async function queryOverpassWithRetry(query, maxRetries = 8, startEndpointIndex 
     let lastError = null;
     const endpoints = getOverpassEndpoints();
     const n = endpoints.length;
+    const httpTimeout = getOverpassHttpTimeoutMs();
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
         try {
@@ -302,7 +309,7 @@ async function queryOverpassWithRetry(query, maxRetries = 8, startEndpointIndex 
             const body = `data=${encodeURIComponent(query)}`;
             const response = await axios.post(endpoint, body, {
                 headers: OVERPASS_AXIOS_HEADERS,
-                timeout: 90000,
+                timeout: httpTimeout,
                 maxContentLength: Infinity,
                 maxBodyLength: Infinity,
                 validateStatus: (status) => status === 200,
@@ -347,11 +354,19 @@ async function queryOverpassWithRetry(query, maxRetries = 8, startEndpointIndex 
             console.log(`Attempt ${attempt + 1} failed: ${lastError.message}`);
 
             if (attempt < maxRetries - 1) {
-                let delay = Math.pow(2, attempt) * 1000;
                 const st = lastError.overpassStatus;
-                if (st === 406 || st === 429 || st === 503 || st === 504) {
-                    delay = Math.max(delay, 5000 + attempt * 2500);
-                }
+                const isTimeoutMsg =
+                    lastError.message.includes('timeout') || lastError.message.includes('ETIMEDOUT');
+                // Rotate mirrors quickly on overload (504/503/429) or client timeout — do not wait 5s+ per mirror.
+                const quickRotate =
+                    st === 429 ||
+                    st === 502 ||
+                    st === 503 ||
+                    st === 504 ||
+                    isTimeoutMsg;
+                const delay = quickRotate
+                    ? 350 + attempt * 200
+                    : Math.min(8000, Math.pow(2, attempt) * 1000);
                 console.log(`Waiting ${delay}ms before retry...`);
                 await sleep(delay);
             }
@@ -362,39 +377,55 @@ async function queryOverpassWithRetry(query, maxRetries = 8, startEndpointIndex 
 }
 
 /**
- * One union of many `around:polyline` clauses often hits Overpass runtime limits. Run one small query per
- * segment and merge (deduped by type/id).
+ * Long routes: many small Overpass queries along the polyline. One failure must not drop OSRM geometry.
+ * Uses node-only traffic_signal queries (lighter than ways) and rotates mirror offset per segment.
+ * @returns {{ elements: Array, failedSegments: number }}
  */
 async function querySignalsAlongRouteSegmentsSequential(segments, bufferMeters) {
     const buf = bufferMeters;
     const merged = [];
     const seen = new Map();
+    const nMirrors = getOverpassEndpoints().length;
+    let failedSegments = 0;
+    let segIdx = 0;
     for (const seg of segments) {
         if (!seg || seg.length < 2) continue;
         const pol = polylineCoordsString(seg);
         const q = `
-[out:json][timeout:60];
+[out:json][timeout:32];
 (
   node["highway"="traffic_signals"](around:${buf},${pol});
   node["crossing"="traffic_signals"](around:${buf},${pol});
-  way["highway"="traffic_signals"](around:${buf},${pol});
-  way["crossing"="traffic_signals"](around:${buf},${pol});
 );
 out center;
 `;
-        const els = await queryOverpassWithRetry(q, 5, 0);
-        for (const el of els) {
-            if (el && el.type != null && el.id != null) {
-                const k = `${el.type}/${el.id}`;
-                if (!seen.has(k)) {
-                    seen.set(k, el);
-                    merged.push(el);
+        try {
+            const els = await queryOverpassWithRetry(q, 4, segIdx % nMirrors);
+            for (const el of els) {
+                if (el && el.type != null && el.id != null) {
+                    const k = `${el.type}/${el.id}`;
+                    if (!seen.has(k)) {
+                        seen.set(k, el);
+                        merged.push(el);
+                    }
                 }
             }
+        } catch (err) {
+            failedSegments++;
+            console.warn(
+                `Corridor segment Overpass failed (${failedSegments}/${segments.length}):`,
+                err instanceof Error ? err.message : err
+            );
         }
-        await sleep(350);
+        segIdx++;
+        await sleep(280);
     }
-    return merged;
+    if (failedSegments > 0) {
+        console.warn(
+            `Long-route signal scan: ${failedSegments} segment(s) failed; kept ${merged.length} OSM elements.`
+        );
+    }
+    return { elements: merged, failedSegments };
 }
 
 router.post('/traffic-analysis', async (req, res) => {
@@ -474,23 +505,16 @@ router.post('/traffic-analysis', async (req, res) => {
                     `Route ${km.toFixed(0)} km exceeds ${ROUTE_LITE_CORRIDOR_M / 1000} km: chunked traffic-signal scan only (full road OSM union skipped)`
                 );
                 useChunkedRouteSignals = true;
-                routeChunkedSampleCoords = samplePolylineEvenly(decodedCoords, 14);
+                routeChunkedSampleCoords = samplePolylineEvenly(decodedCoords, 6);
                 roadsQuery = null;
                 trafficSignalsQuery = null;
                 otherInfraQuery = null;
             } else {
-                const maxPoints = routeDistanceM > 200_000 ? 10 : 15;
-                const step = Math.max(1, Math.floor(decodedCoords.length / maxPoints));
-                const sampledCoords = [];
-                for (let i = 0; i < decodedCoords.length; i += step) {
-                    sampledCoords.push(decodedCoords[i]);
-                }
-                if (sampledCoords[sampledCoords.length - 1] !== decodedCoords[decodedCoords.length - 1]) {
-                    sampledCoords.push(decodedCoords[decodedCoords.length - 1]);
-                }
+                // Cap samples and use fatter chunks so the union stays under public Overpass limits (avoids HTTP 400).
+                const sampledCoords = samplePolylineEvenly(decodedCoords, 10);
 
                 // 250 m corridor; union of short polylines (OK for shorter drives)
-                const routeQueries = buildRouteModeQueries(sampledCoords, 250);
+                const routeQueries = buildRouteModeQueries(sampledCoords, 250, 6);
                 roadsQuery = routeQueries.roadsQuery;
                 trafficSignalsQuery = routeQueries.trafficSignalsQuery;
                 otherInfraQuery = routeQueries.otherInfraQuery;
@@ -533,17 +557,58 @@ router.post('/traffic-analysis', async (req, res) => {
         let roadElements = [];
         let signalElements = [];
         let otherInfraElements = [];
+        let longRouteSignalSegmentsFailed = 0;
+        let routeUnionFallbackApplied = false;
 
         if (useChunkedRouteSignals) {
             if (routeChunkedSampleCoords && routeChunkedSampleCoords.length >= 2) {
-                const segments = chunkCoordsForRouteOverpass(routeChunkedSampleCoords, 4);
+                const segments = chunkCoordsForRouteOverpass(routeChunkedSampleCoords, 5);
                 console.log(
                     `Fetching OSM data (${segments.length} sequential traffic-signal corridor queries; long route)...`
                 );
-                signalElements = await querySignalsAlongRouteSegmentsSequential(segments, 250);
-                signalElements = dedupeOverpassElements(signalElements);
+                const segRes = await querySignalsAlongRouteSegmentsSequential(segments, 320);
+                longRouteSignalSegmentsFailed = segRes.failedSegments;
+                signalElements = dedupeOverpassElements(segRes.elements);
             } else {
                 console.warn('Chunked route signals skipped: insufficient sample coordinates');
+            }
+        } else if (isRouteMode) {
+            console.log('Fetching OSM data (roads, then traffic signals, then other infra)...');
+            try {
+                if (roadsQuery) {
+                    roadElements = await queryOverpassWithRetry(roadsQuery, 8, 0);
+                    roadElements = dedupeOverpassElements(roadElements);
+                }
+                await sleep(400);
+                signalElements = await queryOverpassWithRetry(trafficSignalsQuery, 8, 0);
+                signalElements = dedupeOverpassElements(signalElements);
+                await sleep(400);
+                if (otherInfraQuery) {
+                    otherInfraElements = await queryOverpassWithRetry(otherInfraQuery, 8, 0);
+                    otherInfraElements = dedupeOverpassElements(otherInfraElements);
+                }
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                console.warn(
+                    'Route-mode Overpass union failed (query too large or instance error); falling back to chunked signal-only scan:',
+                    msg
+                );
+                routeUnionFallbackApplied = true;
+                roadElements = [];
+                otherInfraElements = [];
+                const decodedCoords = routeGeoJsonCoordsList[0]?.coordinates;
+                if (decodedCoords && decodedCoords.length >= 2) {
+                    const fallbackSamples = samplePolylineEvenly(decodedCoords, 10);
+                    const segments = chunkCoordsForRouteOverpass(fallbackSamples, 5);
+                    console.log(
+                        `Fetching OSM data (${segments.length} sequential traffic-signal corridor queries; route fallback)...`
+                    );
+                    const segRes = await querySignalsAlongRouteSegmentsSequential(segments, 320);
+                    longRouteSignalSegmentsFailed = segRes.failedSegments;
+                    signalElements = dedupeOverpassElements(segRes.elements);
+                } else {
+                    throw err;
+                }
             }
         } else {
             console.log('Fetching OSM data (roads, then traffic signals, then other infra)...');
@@ -554,7 +619,7 @@ router.post('/traffic-analysis', async (req, res) => {
             await sleep(400);
             signalElements = await queryOverpassWithRetry(trafficSignalsQuery, 8, 0);
             signalElements = dedupeOverpassElements(signalElements);
-            if (signalElements.length === 0 && !isRouteMode) {
+            if (signalElements.length === 0) {
                 const bb = bboxAroundPoint(latN, lonN, searchRadiusMeters);
                 const bboxStr = `(${bb.south},${bb.west},${bb.north},${bb.east})`;
                 const trafficSignalsBboxQuery = `
@@ -711,7 +776,7 @@ router.post('/traffic-analysis', async (req, res) => {
             centerLon: lonN,
             radiusMeters: searchRadiusMeters,
             routeCoords: routeCoordsForFilter,
-            routeCorridorMeters: 255,
+            routeCorridorMeters: 340,
         });
         poiMarkers.length = 0;
         for (const p of filteredPois) poiMarkers.push(p);
@@ -773,6 +838,17 @@ router.post('/traffic-analysis', async (req, res) => {
                 routeCorridorLimitedScanNote:
                     isRouteMode && isLiteCorridor
                         ? 'This route is longer than ~150 km. Traffic signals are sampled along the corridor in small OSM requests; full road-network scan was skipped to avoid timeouts.'
+                        : undefined,
+                routeSignalScanDegraded:
+                    isRouteMode && isLiteCorridor && longRouteSignalSegmentsFailed > 0 ? true : undefined,
+                routeSignalScanNote:
+                    isRouteMode && isLiteCorridor && longRouteSignalSegmentsFailed > 0
+                        ? `Some OSM corridor requests failed (${longRouteSignalSegmentsFailed} segment(s)). The driving route is still shown; signal markers may be incomplete.`
+                        : undefined,
+                routeUnionFallbackApplied: isRouteMode && routeUnionFallbackApplied ? true : undefined,
+                routeUnionFallbackNote:
+                    isRouteMode && routeUnionFallbackApplied
+                        ? 'The full corridor OSM query was rejected or failed; traffic signals were loaded with smaller requests along the route. Road and other POI detail from that pass may be missing.'
                         : undefined,
             },
             visualData: {

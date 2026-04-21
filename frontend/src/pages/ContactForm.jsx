@@ -111,7 +111,7 @@ export default function ContactForm() {
 
       <form onSubmit={onSubmit}>
         <div className="card">
-          <div className="card-header">{editMode ? 'Edit contact' : 'Add contact'}</div>
+          <div className="card-header">{editMode ? 'Edit contact' : 'Add Customer'}</div>
           <div className="card-body form-grid">
             <div>
               <span className="form-label">Prefix</span>

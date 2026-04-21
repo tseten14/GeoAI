@@ -19,7 +19,7 @@ export default function Layout() {
         <div className="site-header-inner">
           <Link to="/contacts" className="site-brand">
             <span className="site-brand-mark" aria-hidden />
-            Geocoded Contact List
+            Geocoded Database
           </Link>
           <button type="button" className="btn btn-ghost btn-sm" onClick={logout}>
             Log out

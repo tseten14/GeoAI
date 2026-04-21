@@ -10,6 +10,9 @@ export default defineConfig(() => ({
     port: 8080,
     strictPort: true,
     hmr: { overlay: false },
+    proxy: {
+      "/api": { target: "http://127.0.0.1:3000", changeOrigin: true },
+    },
   },
   plugins: [react()],
   resolve: {

@@ -4,7 +4,7 @@
   "private": true,
   "description": "Monorepo: backend (Express API), frontend (Vite/React), database config",
   "scripts": {
-    "dev": "concurrently -n api,web -c blue,magenta \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
+    "dev": "node scripts/free-dev-ports.mjs && concurrently -n api,web,traffic -c blue,magenta,green \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\" \"npm run dev --prefix frontend/traffic-app\"",
     "start": "npm start --prefix backend",
     "build": "npm run build --prefix frontend",
     "build:traffic": "cd frontend/traffic-app && npm ci && npm run build",

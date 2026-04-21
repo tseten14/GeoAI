@@ -17,9 +17,9 @@ password = bcrypt.hashSync(password, 10);
 var routes = require('./routes/index');
 var app = express();
 
-var webDist = path.join(__dirname, '..', 'frontend', 'dist');
+var webDist = path.join(__dirname, '..', 'frontend', 'contacts', 'dist');
 var webIndex = path.join(webDist, 'index.html');
-var trafficDist = path.join(__dirname, '..', 'frontend', 'traffic-app', 'dist');
+var trafficDist = path.join(__dirname, '..', 'frontend', 'traffic', 'dist');
 
 app.use(logger('dev'));
 app.use(bodyParser.json());

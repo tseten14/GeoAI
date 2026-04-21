@@ -1,9 +1,9 @@
 node_modules/
 backend/node_modules/
-frontend/node_modules/
-frontend/traffic-app/node_modules/
-frontend/dist/
-frontend/traffic-app/dist/
+frontend/contacts/node_modules/
+frontend/traffic/node_modules/
+frontend/contacts/dist/
+frontend/traffic/dist/
 .DS_Store
 **/.env
 **/.env.local

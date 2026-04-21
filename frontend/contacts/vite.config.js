@@ -13,7 +13,7 @@ export default defineConfig({
         proxyTimeout: 900000,
       },
       // Traffic Insights Vite dev server (also started by root `npm run dev`).
-      // Production / `npm start`: Express still serves frontend/traffic-app/dist (run `npm run build:traffic`).
+      // Production / `npm start`: Express still serves frontend/traffic/dist (run `npm run build:traffic`).
       '/traffic': { target: 'http://127.0.0.1:8080', changeOrigin: true, ws: true }
     }
   },

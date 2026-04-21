@@ -4,12 +4,12 @@
   "private": true,
   "description": "Monorepo: backend (Express API), frontend (Vite/React), database config",
   "scripts": {
-    "dev": "node scripts/free-dev-ports.mjs && concurrently -n api,web,traffic -c blue,magenta,green \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\" \"npm run dev --prefix frontend/traffic-app\"",
+    "dev": "node scripts/free-dev-ports.mjs && concurrently -n api,web,traffic -c blue,magenta,green \"npm run dev --prefix backend\" \"npm run dev --prefix frontend/contacts\" \"npm run dev --prefix frontend/traffic\"",
     "start": "npm start --prefix backend",
-    "build": "npm run build --prefix frontend",
-    "build:traffic": "cd frontend/traffic-app && npm ci && npm run build",
-    "dev:traffic": "cd frontend/traffic-app && npm run dev",
-    "install:all": "npm install --prefix backend && npm install --prefix frontend && npm install --prefix frontend/traffic-app",
+    "build": "npm run build --prefix frontend/contacts",
+    "build:traffic": "cd frontend/traffic && npm ci && npm run build",
+    "dev:traffic": "cd frontend/traffic && npm run dev",
+    "install:all": "npm install --prefix backend && npm install --prefix frontend/contacts && npm install --prefix frontend/traffic",
     "presentation": "node scripts/generate-presentation.js"
   },
   "devDependencies": {

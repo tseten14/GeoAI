@@ -16,7 +16,7 @@ Traffic App is a frontend React application built with TypeScript, Vite, and Tai
 
 ## Directory Structure
 ```
-traffic-app/
+frontend/traffic/
 ├── package.json               # Dependencies and npm scripts
 ├── vite.config.ts             # Vite configuration
 ├── tailwind.config.ts         # Tailwind theme & plugin setup

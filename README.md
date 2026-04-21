@@ -7,7 +7,8 @@ Monorepo: **Express API** + **React (Vite) contact UI** + **Traffic Insights** S
 | Folder | Role |
 |--------|------|
 | **`backend/`** | Express server (`index.js`), routes, Passport auth, Mongo access via `backend/db/connection.js`. |
-| **`frontend/`** | Vite + React contact app; **`frontend/traffic-app/`** is the Traffic Insights build. |
+| **`frontend/contacts/`** | Vite + React contact list (legacy course UI). |
+| **`frontend/traffic/`** | Vite + React **Traffic Insights** SPA (TypeScript, Tailwind, shadcn). |
 | **`database/`** | `config.js` (Mongo URL, DB name, collection) and README — no npm dependencies here. |
 
 Install dependencies for each runnable package:
@@ -15,11 +16,11 @@ Install dependencies for each runnable package:
 ```bash
 npm install                    # root: concurrently only
 npm install --prefix backend
-npm install --prefix frontend
-npm install --prefix frontend/traffic-app
+npm install --prefix frontend/contacts
+npm install --prefix frontend/traffic
 ```
 
-Or: `npm run install:all` after `npm install` at root (installs backend + frontend + traffic-app).
+Or: `npm run install:all` after `npm install` at root (installs backend + both front-end packages).
 
 ## Quick start
 
@@ -32,14 +33,14 @@ Or: `npm run install:all` after `npm install` at root (installs backend + fronte
    ```
 
    - API: **http://127.0.0.1:3000**
-   - Contacts: **http://127.0.0.1:5173** — proxies `/api` and **`/traffic`** to the API (traffic UI is the **built** app in `frontend/traffic-app/dist`)
+   - Contacts: **http://127.0.0.1:5173** — proxies `/api` to the API and **`/traffic`** to the Traffic Vite dev server on **8080** when `npm run dev` is running (HMR).
 
    Login: `sherpa_14` / `geocode`.
 
-   After you change **traffic-app** styles or code, run **`npm run build:traffic`** (or `cd frontend/traffic-app && npm run build`), then refresh **`http://127.0.0.1:5173/traffic/`**.
+   For a **static** Traffic build under contacts without the traffic dev server, run **`npm run build:traffic`**, then open **`http://127.0.0.1:5173/traffic/`** (served from `frontend/traffic/dist` via the API in production-style setups).
 
-   Optional live traffic HMR: **`npm run dev:traffic`** (opens **http://127.0.0.1:8080/traffic/**). If Vite errors about `@rollup/rollup-*`, reinstall native deps:  
-   `cd frontend/traffic-app && rm -rf node_modules && npm install`
+   Optional: run **Traffic only** with **`npm run dev:traffic`** → **http://127.0.0.1:8080/traffic/**. If Vite errors about `@rollup/rollup-*`, reinstall native deps:  
+   `cd frontend/traffic && rm -rf node_modules && npm install`
 
 3. **Production-style** (single port — build the SPA first):
 
@@ -54,18 +55,18 @@ Or: `npm run install:all` after `npm install` at root (installs backend + fronte
 
 | Script | Description |
 |--------|-------------|
-| `npm run dev` | API + contacts Vite (:5173); `/traffic` proxied to API (serves `traffic-app/dist`) |
+| `npm run dev` | API + contacts Vite (:5173); `/traffic` proxied to Traffic Vite (:8080) |
 | `npm start` | API only (`backend`) |
-| `npm run build` | Production build of `frontend` → `frontend/dist` |
-| `npm run build:traffic` | Build Traffic Insights → `frontend/traffic-app/dist` |
+| `npm run build` | Production build of contacts → `frontend/contacts/dist` |
+| `npm run build:traffic` | Build Traffic Insights → `frontend/traffic/dist` |
 | `npm run dev:traffic` | Vite dev for Traffic Insights only |
 
 ## Traffic Insights
 
-Uses **Supabase** for the OSM analysis function. In **`frontend/traffic-app/`**:
+Uses **Supabase** for the OSM analysis function. In **`frontend/traffic/`**:
 
 1. Configure `.env` with `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`.
-2. Deploy the `osm-traffic-analysis` Edge Function (see `frontend/traffic-app/supabase/`).
+2. Deploy the `osm-traffic-analysis` Edge Function (see `frontend/traffic/supabase/`).
 
 ## Environment (MongoDB)
 

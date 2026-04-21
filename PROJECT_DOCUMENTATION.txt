@@ -46,7 +46,7 @@
   - Static assets under public/ (CSS, images, javascripts/functions.js)
   - Leaflet on the contacts page for plotting geocoded addresses
 
-  Frontend — Traffic Insights (traffic-app/)
+  Frontend — Traffic Insights (frontend/traffic/)
   - Vite 5, React 18, TypeScript
   - react-router-dom, TanStack Query (available), Tailwind + Radix/shadcn-style UI
   - Leaflet + react-leaflet, leaflet.heat for heatmaps
@@ -74,7 +74,7 @@
     Password: geocode
 
   Traffic Insights UI
-  - Production-style: build the React app so Express can serve traffic-app/dist
+  - Production-style: build the React app so Express can serve frontend/traffic/dist
       npm run build:traffic
     Then open http://127.0.0.1:3000/traffic/
   - Development: Vite dev server (hot reload), typically port 8080
@@ -98,7 +98,7 @@
   - Main HTML routes are mounted at / via routes/index.js.
   - Traffic REST API: app.use('/api', trafficApiRoute) → routes/traffic-api.js
     exposes POST /api/traffic-analysis.
-  - Traffic SPA: express.static on traffic-app/dist at /traffic, plus a catch-all
+  - Traffic SPA: express.static on frontend/traffic/dist at /traffic, plus a catch-all
     GET /traffic/* that returns index.html for client-side routing.
 
   HTTP server bootstrap (listen) is in the lower portion of index.js (typical
@@ -162,7 +162,7 @@
   - Dashboard: summary counts, congestion score 0–100, qualitative level
     (Minimal / Light / … / Severe).
 
-  Frontend implementation (traffic-app/src)
+  Frontend implementation (frontend/traffic/src)
   - pages/Index.tsx — State, URL search params, orchestrates analyzeTraffic,
     pipeline animation, passes props to MapView, AnalysisDashboard, etc.
   - lib/api/traffic.ts — POST /api/traffic-analysis with JSON body:
@@ -233,7 +233,7 @@
 8. OPTIONAL SUPABASE PIECE
 --------------------------------------------------------------------------------
 
-  The repository includes traffic-app/supabase/ (e.g. Edge Function
+  The repository includes frontend/traffic/supabase/ (e.g. Edge Function
   osm-traffic-analysis) and Supabase client scaffolding. README describes
   deploying that function and setting VITE_SUPABASE_* for a Supabase-centric
   deployment.
@@ -256,7 +256,7 @@
       traffic-api.js         Traffic analysis API
   - views/                   Pug templates (login, contacts, mailer, update, …)
   - public/                  Static assets for classic UI (e.g. javascripts/)
-  - traffic-app/             Vite + React Traffic Insights
+  - frontend/traffic/             Vite + React Traffic Insights
       src/                   Application source
       dist/                  Production build output (served at /traffic/)
       supabase/              Edge function / Supabase config (optional)
@@ -267,7 +267,7 @@
 
   - Public Overpass endpoints are rate-limited and occasionally return errors;
     retries and mirror rotation are implemented to improve success rates.
-  - Rebuild traffic-app after UI changes: npm run build:traffic (or dev server).
+  - Rebuild Traffic UI after changes: npm run build:traffic (or dev server).
   - For production, replace embedded Mapbox token, session secret, and demo
     credentials; use HTTPS and secure session cookies.
 

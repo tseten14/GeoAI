@@ -194,17 +194,18 @@ export function MapView({
 
         // @ts-expect-error leaflet.heat extends L
         heatLayerRef.current = L.heatLayer(heatData, {
-          radius: 22,
-          blur: 28,
-          minOpacity: 0.22,
+          radius: 24,
+          blur: 30,
+          minOpacity: 0.2,
           maxZoom: 18,
           max: 1.2,
           gradient: {
-            0.35: '#22c55e',
-            0.55: '#06b6d4',
-            0.7: '#3b82f6',
-            0.85: '#eab308',
-            1.0: '#ef4444',
+            0.25: '#fffbeb',
+            0.45: '#fde68a',
+            0.6: '#fb923c',
+            0.78: '#f97316',
+            0.9: '#ea580c',
+            1.0: '#b91c1c',
           },
         });
         heatLayerRef.current.addTo(map);
